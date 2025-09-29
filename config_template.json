@@ -1,0 +1,30 @@
+{
+    "add_floor": false,
+    "floating_base": false,
+    "no_actuators": false,
+    "output": "$(find cobot_description)/xml",
+    "armature": null,
+    "default_actuator_gains": [
+        500.0,
+        1.0
+    ],
+    "damping_multiplier": 1000.0,
+    "gravity_compensation": false,
+    "add_ros2_control": false,
+    "add_ros_plugins": false,
+    "add_clock_publisher": true,
+    "add_mimic_joints": true,
+    "ros2_control_config": null,
+    "compiler_options": null,
+    "integrator": null,
+    "no_copy_meshes": false,
+    "mesh_reduction": 0.0,
+    "save_preprocessed": false,
+    "solver": null,
+    "xacro_args": [
+        "hangup:=true",
+        "hardware_type:=sim_mujoco"
+    ],
+    "log_level": "INFO",
+    "traceback": false
+}

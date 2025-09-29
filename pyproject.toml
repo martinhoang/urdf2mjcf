@@ -1,0 +1,19 @@
+[project]
+name = "urdf2mjcf"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Martin Hoang", email = "hoangmrt@schaeffler.com" }
+]
+requires-python = ">=3.10"
+dependencies = [
+    "mujoco>=3.3.6",
+]
+
+[project.scripts]
+urdf2mjcf = "urdf2mjcf.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
