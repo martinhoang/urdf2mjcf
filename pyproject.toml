@@ -9,6 +9,7 @@ authors = [
 requires-python = ">=3.10"
 dependencies = [
     "mujoco>=3.3.6",
+    "pymeshlab>=2025.7",
 ]
 
 [project.scripts]
