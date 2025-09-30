@@ -233,7 +233,7 @@ uv tool install -e .
 
 ## License
 
-This project is part of the umanoid_description_mujoco package. See the main package LICENSE file for details.
+See the main package [LICENSE](./LICENSE) file for details.
 
 ## Contributing
 
