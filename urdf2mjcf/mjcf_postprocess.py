@@ -44,23 +44,21 @@ def _parse_attr_string(attr_str, separator=" "):
 	- "class='visual' group='2'" (separator=" ")
 	- "class='visual';group='2'" (separator=";")  
 	- "class='visual',group='2'" (separator=",")
+	- "pos='1.0 2.0 3.0' size='0.5 0.5 0.5'" (space-separated numbers in quotes)
 	"""
 	attrs = {}
 	duplicate_keys = set()
 	
-	# Split by separator and parse each key=value pair
-	parts = [part.strip() for part in attr_str.split(separator) if part.strip()]
-	
+	# Use regex to find all key=value pairs directly, handling quoted values that may contain spaces
 	pattern = r"(\w+)=(['\"])(.*?)\2"
+	matches = re.findall(pattern, attr_str)
 	
-	for part in parts:
-		matches = re.findall(pattern, part)
-		for match in matches:
-			key, quote, value = match
-			if key in attrs:
-				duplicate_keys.add(key)
-				print_warning(f"Duplicate attribute '{key}' found in '{attr_str}'. Using last value: '{value}'")
-			attrs[key] = value
+	for match in matches:
+		key, quote, value = match
+		if key in attrs:
+			duplicate_keys.add(key)
+			print_warning(f"Duplicate attribute '{key}' found in '{attr_str}'. Using last value: '{value}'")
+		attrs[key] = value
 	
 	if not attrs:
 		print_warning(f"Could not parse attribute string: '{attr_str}'. Expected format like key1='value1'{separator}key2='value2'")

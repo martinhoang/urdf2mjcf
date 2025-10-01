@@ -227,9 +227,11 @@ uv tool install -e .
 ```
 
 ### Running Tests
-```bash
-# Add test commands when available
-```
+[TODO]
+
+## TODO Features
+- Passsing additional arguments along side json config file
+- Processing multiple meshes (with their colors) inside a DAE file
 
 ## License
 
