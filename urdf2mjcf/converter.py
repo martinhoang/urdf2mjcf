@@ -4,8 +4,7 @@ import subprocess
 import tempfile
 import json
 import xml.etree.ElementTree as ET
-
-# Potentially re-launched, so import mujoco after venv setup
+import copy
 import mujoco
 
 from . import urdf_preprocess, mesh_ops, mjcf_postprocess
@@ -32,7 +31,7 @@ class URDFToMJCFConverter:
 
     def convert(self):
         """Main conversion pipeline."""
-        args = self.args
+        args = copy.deepcopy(self.args)
         
         tracking_progress = []
 
@@ -159,7 +158,6 @@ class URDFToMJCFConverter:
         # Inject custom plugins and mujoco elements from URDF
         for plugin_node in urdf_plugins:
             mjcf_postprocess.post_process_transform_and_add_custom_plugin(root, plugin_node)
-        mjcf_postprocess.post_process_inject_custom_mujoco_elements(root, custom_mujoco_elements)
         mjcf_postprocess.post_process_compiler_options(root)
         mjcf_postprocess.post_process_add_light(root)
         if args.add_clock_publisher:
@@ -197,7 +195,9 @@ class URDFToMJCFConverter:
             mjcf_postprocess.post_process_set_simulation_options(root, solver=args.solver, integrator=args.integrator)
 
         # Final regroup to ensure MujocoRosUtils plugins are contiguous
+        mjcf_postprocess.post_process_inject_custom_mujoco_elements(root, custom_mujoco_elements)
         mjcf_postprocess.post_process_group_ros_utils_plugins(root)
+        
 
         try:
             tree = ET.ElementTree(root)

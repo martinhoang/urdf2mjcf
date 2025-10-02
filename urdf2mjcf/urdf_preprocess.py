@@ -14,6 +14,7 @@ from _utils import (
 def resolve_path(path):
 	"""
 	Resolve a path that can be a package URI, a file URI, a relative path, or an absolute path.
+	Also supports environment variable syntax: ${env:VAR}
 	Returns the absolute path if resolvable, otherwise None.
 	"""
 	if not path:
@@ -35,6 +36,28 @@ def resolve_path(path):
 				return None
 		return None
 
+	# Helper function to resolve ${env:VAR} syntax
+	def _resolve_env_syntax(path_str, context=""):
+		"""Resolve environment variables in the format ${env:VAR_NAME}"""
+		env_pattern = r"\$\{env:([^}]+)\}"
+		
+		def replace_env_var(match):
+			var_name = match.group(1)
+			env_value = os.environ.get(var_name)
+			if env_value is not None:
+				print_info(f"Resolved environment variable '{var_name}' to '{env_value}'")
+				return env_value
+			else:
+				context_msg = f" in {context}" if context else ""
+				print_warning(f"Environment variable '{var_name}' not found{context_msg}.")
+				return match.group(0)  # Return original string if not found
+		
+		return re.sub(env_pattern, replace_env_var, path_str)
+
+	# Resolve environment variables first
+	if "${env:" in path:
+		path = _resolve_env_syntax(path)
+
 	if path.startswith("package://"):
 		parts = path[len("package://") :].split("/", 1)
 		package_name = parts[0]
@@ -49,6 +72,9 @@ def resolve_path(path):
 	elif path.startswith("file://"):
 		path = path[len("file://") :]
 		resolved = None
+		# Resolve environment variables in file URI
+		if "${env:" in path:
+			path = _resolve_env_syntax(path, "file URI")
 		# Try to resolve $(find package) syntax first
 		if "$(find" in path:
 			resolved = _resolve_find_syntax(path, "file URI")

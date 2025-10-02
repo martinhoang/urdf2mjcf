@@ -229,12 +229,9 @@ uv tool install -e .
 ### Running Tests
 [TODO]
 
-## TODO Bugs/Features
-[x] Raise error on failed mesh conversion
-[x] Apply special operations, e.g. "inject_attrs", "replace_attrs", etc. with w.r.t to the <tag> scope of the parent tag
-[ ] Passsing additional arguments along side json config file
-[ ] Processing multiple meshes (with their colors) inside a DAE file
-
+## TODO bug fixes and new features
+Refer to [TODO](/doc/todo.md)
+ 
 ## License
 
 See the main package [LICENSE](./LICENSE) file for details.
