@@ -105,6 +105,7 @@ class URDFToMJCFConverter:
                 ros2c_joint_map,
             ) = urdf_preprocess.preprocess_urdf(urdf_to_process, args.compiler_options, self.default_mesh_dir)
 
+            tracking_progress.append({'name': 'Convert & Copy Meshes'})
             if not args.no_copy_meshes:
                 mesh_ops.copy_mesh_files(
                     absolute_mesh_paths, 

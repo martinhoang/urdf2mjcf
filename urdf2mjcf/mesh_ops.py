@@ -48,9 +48,10 @@ def simplify_mesh(input_file, output_file, target_reduction=0.95, combine_meshes
 
 			print(f"Saved simplified mesh to: {modified_output_file}")
 	except Exception as e:
-		print(f"Failed to process {input_file}: {e}")
+		print_error(f"Failed to process {input_file}: {e}")
+		raise RuntimeError(f"Mesh simplification failed for {input_file}.")
 
-def copy_mesh_files(absolute_mesh_paths, output_dir, mesh_dir=None, mesh_reduction=0.9):
+def copy_mesh_files(absolute_mesh_paths, output_dir, mesh_dir=None, mesh_reduction=0.9, raise_on_error=True):
 	"""
 	Copy mesh files to output dir.
 	Support STL/OBJ. Convert DAE->STL via pymeshlab.
@@ -91,7 +92,10 @@ def copy_mesh_files(absolute_mesh_paths, output_dir, mesh_dir=None, mesh_reducti
 
 			if not os.path.exists(src):
 				print_warning(f"Source mesh file '{src}' does not exist. Ignoring.")
-				ignored_count += 1
+				if raise_on_error:
+					raise RuntimeError(f"Source mesh file '{src}' does not exist.")
+				else:
+					ignored_count += 1
 				return
 
 			if dest_ext not in SUPPORTED_FORMATS:
@@ -117,10 +121,16 @@ def copy_mesh_files(absolute_mesh_paths, output_dir, mesh_dir=None, mesh_reducti
 					converted_count += 1
 				except Exception as e:
 					print_warning(f"Could not convert mesh from '{src}' (DAE to STL). Error: {e}")
-					ignored_count += 1
+					if raise_on_error:
+						raise RuntimeError(f"Failed to convert mesh from '{src}' to '{modified_dest}'.")
+					else:
+						ignored_count += 1
 			else:
 				print_warning(f"Unsupported mesh format '{src_ext}' for file '{os.path.basename(src)}'. Ignoring.")
-				ignored_count += 1
+				if raise_on_error:
+					raise RuntimeError(f"Unsupported mesh format '{src_ext}' for file '{os.path.basename(src)}'.")
+				else:
+					ignored_count += 1
 			
 			print_base(f"Copied '{mesh_type}' mesh '{src_name}' to '{dest_name}'.")
 

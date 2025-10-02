@@ -44,23 +44,21 @@ def _parse_attr_string(attr_str, separator=" "):
 	- "class='visual' group='2'" (separator=" ")
 	- "class='visual';group='2'" (separator=";")  
 	- "class='visual',group='2'" (separator=",")
+	- "pos='1.0 2.0 3.0' size='0.5 0.5 0.5'" (space-separated numbers in quotes)
 	"""
 	attrs = {}
 	duplicate_keys = set()
 	
-	# Split by separator and parse each key=value pair
-	parts = [part.strip() for part in attr_str.split(separator) if part.strip()]
-	
+	# Use regex to find all key=value pairs directly, handling quoted values that may contain spaces
 	pattern = r"(\w+)=(['\"])(.*?)\2"
+	matches = re.findall(pattern, attr_str)
 	
-	for part in parts:
-		matches = re.findall(pattern, part)
-		for match in matches:
-			key, quote, value = match
-			if key in attrs:
-				duplicate_keys.add(key)
-				print_warning(f"Duplicate attribute '{key}' found in '{attr_str}'. Using last value: '{value}'")
-			attrs[key] = value
+	for match in matches:
+		key, quote, value = match
+		if key in attrs:
+			duplicate_keys.add(key)
+			print_warning(f"Duplicate attribute '{key}' found in '{attr_str}'. Using last value: '{value}'")
+		attrs[key] = value
 	
 	if not attrs:
 		print_warning(f"Could not parse attribute string: '{attr_str}'. Expected format like key1='value1'{separator}key2='value2'")
@@ -218,7 +216,8 @@ def post_process_inject_custom_mujoco_elements(root, elements):
 	elements_str = "\n" + "\n".join([ET.tostring(elem, encoding="unicode") for elem in elements])
 	print_info(f"-> Injecting custom MJCF elements from URDF: {elements_str}")
 	
-	for elem in elements:
+	def _process_element_recursively(elem, parent_context=None):
+		"""Process an element and its children recursively."""
 		# Parse custom syntax attributes
 		custom_operations = _parse_custom_syntax(elem)
 		
@@ -228,15 +227,43 @@ def post_process_inject_custom_mujoco_elements(root, elements):
 							if k not in ["inject_attr", "inject_attrs", "replace_attrs"]}
 			elem_for_matching = ET.Element(elem.tag, matching_attrs)
 			
-			matching_nodes = xml_utils.find_matching_elements(root, elem_for_matching)
+			# Find matching nodes in the appropriate context
+			if parent_context is not None:
+				# Search within the parent context only
+				matching_nodes = xml_utils.find_matching_elements(parent_context, elem_for_matching)
+			else:
+				# Global search
+				matching_nodes = xml_utils.find_matching_elements(root, elem_for_matching)
 			
 			if matching_nodes:
 				for target_node in matching_nodes:
 					_apply_custom_operations(target_node, custom_operations)
 			else:
 				matching_attrs_str = ", ".join([f"{k}='{v}'" for k, v in matching_attrs.items()])
-				print_warning(f"No matching elements found for custom operations pattern <{elem.tag} {matching_attrs_str}>")
-			continue
+				context_desc = f"within {parent_context.tag}" if parent_context is not None else "globally"
+				print_warning(f"No matching elements found for custom operations pattern <{elem.tag} {matching_attrs_str}> {context_desc}")
+			
+			# Process children of this element recursively (in case there are nested operations)
+			for child in elem:
+				_process_element_recursively(child, parent_context)
+			return
+		
+		# Check if this element has children that need custom operations
+		has_children_with_operations = any(_parse_custom_syntax(child) for child in elem)
+		
+		if has_children_with_operations:
+			# Find matching parent element to provide context for children
+			matching_parents = xml_utils.find_matching_elements(root, elem)
+			
+			if matching_parents:
+				for parent_node in matching_parents:
+					# Process children within this parent context
+					for child in elem:
+						_process_element_recursively(child, parent_node)
+			else:
+				attrs_str = ", ".join([f"{k}='{v}'" for k, v in elem.attrib.items()])
+				print_warning(f"No matching parent element found for <{elem.tag} {attrs_str}> - cannot apply child operations")
+			return
 		
 		# Standard child element injection (existing behavior)
 		matching_nodes = xml_utils.find_matching_elements(root, elem)
@@ -253,7 +280,7 @@ def post_process_inject_custom_mujoco_elements(root, elements):
 					child_copy = copy.deepcopy(child)
 					target_node.append(child_copy)
 					print_debug(f"Injected <{child_copy.tag}> into existing <{target_node.tag}>.")
-			continue
+			return
 
 		# No matching element found, create new element at root level
 		target_node = root.find(elem.tag)
@@ -264,6 +291,10 @@ def post_process_inject_custom_mujoco_elements(root, elements):
 			child_copy = copy.deepcopy(child)
 			target_node.append(child_copy)
 			print_debug(f"Injected <{child_copy.tag}> into <{elem.tag}>.")
+	
+	# Process all root-level elements
+	for elem in elements:
+		_process_element_recursively(elem)
 
 
 def post_process_transform_and_add_custom_plugin(root, urdf_plugin_node):
