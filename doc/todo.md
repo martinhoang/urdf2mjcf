@@ -7,3 +7,4 @@
 [ ] Re-arrange post-processing procedures for max functionalities and avoid potential bugs
 [ ] Unit tests this whole package
 [ ] Activate tool usage in cli arguments for more mesh conversion and processing functions
+[ ] Install some of the tools as extension of the "urdf2mjcf" tool, perhaps through a flag or use dot "." notation or something
