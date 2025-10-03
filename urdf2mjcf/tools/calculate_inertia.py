@@ -155,11 +155,11 @@ if __name__ == "__main__":
 			help="The orientation [roll pitch yaw] in degrees of the new origin."
 		)
 		parser.add_argument(
-			"-s"
+			"-s",
 			"--scale",
 			type=float,
 			default=1.0,
-			help="Scale factor to apply to the mesh (default: 0.001 for mm to m)."
+			help="Scale factor to apply to the mesh (default: 1 m)."
 		)
 
 		args = parser.parse_args()
