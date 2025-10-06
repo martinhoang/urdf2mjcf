@@ -259,7 +259,15 @@ def post_process_inject_custom_mujoco_elements(root, elements):
 				for parent_node in matching_parents:
 					# Process children within this parent context
 					for child in elem:
-						_process_element_recursively(child, parent_node)
+						child_operations = _parse_custom_syntax(child)
+						if child_operations:
+							# Process child with custom operations
+							_process_element_recursively(child, parent_node)
+						else:
+							# Regular child injection - copy the child as-is into the parent
+							child_copy = copy.deepcopy(child)
+							parent_node.append(child_copy)
+							print_debug(f"Injected regular child <{child_copy.tag}> into existing <{parent_node.tag}>.")
 			else:
 				attrs_str = ", ".join([f"{k}='{v}'" for k, v in elem.attrib.items()])
 				print_warning(f"No matching parent element found for <{elem.tag} {attrs_str}> - cannot apply child operations")
@@ -329,6 +337,10 @@ def post_process_transform_and_add_custom_plugin(root, urdf_plugin_node):
 
 def post_process_add_floor(root):
 	"""Add a floor plane."""
+	is_floor_exists = root.find(".//geom[@name='floor']")
+	if is_floor_exists is not None:
+		print_base("-> Floor plane already exists in the model; skipping addition.")
+		return
 	asset = root.find("asset")
 	if asset is None:
 		asset = xml_utils.ensure_node_before_worldbody(root, "asset")
