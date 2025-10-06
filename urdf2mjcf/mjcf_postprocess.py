@@ -521,7 +521,7 @@ def post_process_set_simulation_options(root, solver=None, integrator=None):
 		print_base(f"-> Set simulation options: {', '.join(options_set)}")
 
 
-def post_process_add_actuators(root, default_ros2_control_instance, mimic_joints=None, add_ros_plugins=False, default_actuator_gains=[500.0, 1.0], ros2c_joint_map=None):
+def post_process_add_actuators(root, default_ros2_control_instance, mimic_joints=None, add_ros_plugins=False, default_actuator_gains=[500.0, 1.0], ros2c_joint_map=None, force_actuator_tags=True):
 	"""Add actuators per ros2_control interfaces.
 	- Multiple interfaces on one joint are supported.
 	- If a joint has both 'position' and 'velocity', create both actuators.
@@ -594,7 +594,7 @@ def post_process_add_actuators(root, default_ros2_control_instance, mimic_joints
 			continue
 
 		# Use unique actuator names if multiple interfaces per joint
-		use_suffix = len(tags_to_add) > 1
+		use_suffix = len(tags_to_add) > 1 or force_actuator_tags
 
 		for tag in tags_to_add:
 			act_name = f"{joint_name}_{tag}" if use_suffix else joint_name

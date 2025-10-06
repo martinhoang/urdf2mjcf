@@ -180,7 +180,8 @@ class URDFToMJCFConverter:
                 mimic_joints, 
                 args.add_ros_plugins, 
                 default_actuator_gains=args.default_actuator_gains, 
-                ros2c_joint_map=ros2c_joint_map
+                ros2c_joint_map=ros2c_joint_map,
+                force_actuator_tags=args.force_actuator_tags
             )
             if args.add_mimic_joints and mimic_joints:
                 mjcf_postprocess.post_process_add_mimic_plugins(root, mimic_joints, args.default_actuator_gains)

@@ -105,6 +105,13 @@ def main():
         help="Do not add position and plugin actuators for non-fixed joints.",
     )
     core_group.add_argument(
+        "-nft",
+        "--no-force-actuator-tags",
+        action="store_false",
+        dest="force_actuator_tags",
+        help="Do not force unique actuator names with interface suffixes (e.g., joint_position, joint_velocity) even for single-interface joints.",
+    )
+    core_group.add_argument(
         "-o",
         "--output",
         type=str,
