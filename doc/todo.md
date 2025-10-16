@@ -8,3 +8,5 @@
 [ ] Unit tests this whole package
 [ ] Activate tool usage in cli arguments for more mesh conversion and processing functions
 [ ] Install some of the tools as extension of the "urdf2mjcf" tool, perhaps through a flag or use dot "." notation or something
+[ ] Use CoACD for convex decomposition to achieve high-resolution collision hulls
+[ ] Automatically use tool to reduce mesh complexity, i.e. number of faces to be between 1-200000
