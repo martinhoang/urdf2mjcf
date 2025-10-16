@@ -217,6 +217,41 @@ def main():
         help="Set the mesh reduction ratio, 0.0 for no reduction and 1.0 for full reduction.",
     )
     advanced_group.add_argument(
+        "-sr",
+        "--simplify-reduction",
+        type=float,
+        default=1.0,
+        metavar="RATIO",
+        help="Simplify meshes using pymeshlab. Reduction ratio (0.0-1.0). Values < 1.0 enable simplification. Default: 1.0 (no simplification). Mutually exclusive with --simplify-target-faces.",
+    )
+    advanced_group.add_argument(
+        "-stf",
+        "--simplify-target-faces",
+        type=int,
+        default=None,
+        metavar="COUNT",
+        help="Simplify meshes to target number of faces (e.g., 200000). Mutually exclusive with --simplify-reduction.",
+    )
+    advanced_group.add_argument(
+        "-gcm",
+        "--generate-collision-meshes",
+        action="store_true",
+        help="Generate convex hull collision meshes from visual meshes.",
+    )
+    advanced_group.add_argument(
+        "-ci",
+        "--calculate-inertia",
+        action="store_true",
+        help="Calculate and print inertia for meshes (requires mass parameter).",
+    )
+    advanced_group.add_argument(
+        "-cim",
+        "--calculate-inertia-mass",
+        type=float,
+        metavar="MASS",
+        help="Mass (in kg) to use for inertia calculations.",
+    )
+    advanced_group.add_argument(
         "-sp",
         "--save-preprocessed",
         action="store_true",

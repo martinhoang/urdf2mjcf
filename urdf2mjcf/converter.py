@@ -106,11 +106,42 @@ class URDFToMJCFConverter:
 
             tracking_progress.append({'name': 'Convert & Copy Meshes'})
             if not args.no_copy_meshes:
+                # Validate that only one simplification method is specified
+                if args.simplify_reduction < 1.0 and args.simplify_target_faces is not None:
+                    raise ValueError("Cannot specify both --simplify-reduction and --simplify-target-faces. Choose one.")
+                
+                # Prepare mesh tool parameters
+                calculate_inertia_params = None
+                if args.calculate_inertia and args.calculate_inertia_mass:
+                    calculate_inertia_params = {
+                        'mass': args.calculate_inertia_mass,
+                        'scale': 0.001  # Default mm to m conversion
+                    }
+                
+                # Simplification is enabled when simplify_reduction < 1.0 or target_faces is specified
+                simplify_params = None
+                simplify_meshes = args.simplify_reduction < 1.0 or args.simplify_target_faces is not None
+                if simplify_meshes:
+                    if args.simplify_target_faces is not None:
+                        # Use target faces method
+                        simplify_params = {
+                            'target_faces': args.simplify_target_faces
+                        }
+                    else:
+                        # Use reduction ratio method
+                        simplify_params = {
+                            'reduction': args.simplify_reduction
+                        }
+                
                 mesh_ops.copy_mesh_files(
-                    absolute_mesh_paths, 
-                    output_dir, 
-                    mesh_dir=self.default_mesh_dir, 
-                    mesh_reduction=args.mesh_reduction if args.mesh_reduction < 1.0 and args.mesh_reduction > 0.0 else 0.0
+                    absolute_mesh_paths,
+                    output_dir,
+                    mesh_dir=self.default_mesh_dir,
+                    mesh_reduction=args.mesh_reduction if args.mesh_reduction < 1.0 and args.mesh_reduction > 0.0 else 0.0,
+                    calculate_inertia_params=calculate_inertia_params,
+                    generate_collision=args.generate_collision_meshes,
+                    simplify_meshes=simplify_meshes,
+                    simplify_params=simplify_params,
                 )
 
             ET.indent(modified_urdf_tree, space="\t")

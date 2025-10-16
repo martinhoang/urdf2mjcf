@@ -46,7 +46,8 @@ def process_mesh(stlpath, outdirpath, visualize=False):
         return False
 
 
-if __name__ == "__main__":
+def main():
+    """Main entry point for command-line usage."""
     indirpath = "meshes"
     outdirpath = "meshes/collision"
 
@@ -85,3 +86,7 @@ if __name__ == "__main__":
         print(f"Warning: {total - successful} files failed to process")
     else:
         print("All files processed successfully!")
+
+
+if __name__ == "__main__":
+    main()

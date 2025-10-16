@@ -85,7 +85,7 @@ def copy_mesh_files(absolute_mesh_paths, output_dir, mesh_dir=None, mesh_reducti
 		calculate_inertia_params: Dict with 'mass' (required) and optional 'translation', 'orientation', 'scale' for inertia calculation
 		generate_collision: Whether to generate collision meshes using convex hulls
 		simplify_meshes: Whether to simplify meshes using the simplify tool
-		simplify_params: Dict with optional 'reduction', 'translation', 'scale' for mesh simplification
+		simplify_params: Dict with optional 'reduction' (0.0-1.0), 'target_faces' (int), 'translation', 'scale' for mesh simplification
 	"""
 	print_info("Copying mesh files...")
 	if not absolute_mesh_paths:
@@ -184,12 +184,13 @@ def copy_mesh_files(absolute_mesh_paths, output_dir, mesh_dir=None, mesh_reducti
 		if simplify_meshes and SIMPLIFY_MESH_TOOL_AVAILABLE:
 			try:
 				params = simplify_params or {}
-				reduction = params.get('reduction', 0.5)
+				reduction = params.get('reduction', None)
+				target_faces = params.get('target_faces', None)
 				translation = params.get('translation', None)
 				scale = params.get('scale', None)
 				
 				print_info(f"Simplifying {mesh_type_name} mesh for link '{link_name}': {os.path.basename(mesh_file_path)}")
-				simplify_mesh_tool(mesh_file_path, mesh_file_path, reduction, translation, scale)
+				simplify_mesh_tool(mesh_file_path, mesh_file_path, reduction, target_faces, translation, scale)
 				print_confirm(f"-> Simplified {mesh_type_name} mesh: {os.path.basename(mesh_file_path)}")
 			except Exception as e:
 				print_warning(f"Failed to simplify {mesh_type_name} mesh '{mesh_file_path}': {e}")

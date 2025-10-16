@@ -10,10 +10,15 @@ requires-python = ">=3.10"
 dependencies = [
     "mujoco>=3.3.6",
     "pymeshlab>=2025.7",
+    "trimesh[easy]>=4.0.0",
+    "open3d>=0.18.0",
 ]
 
 [project.scripts]
 urdf2mjcf = "urdf2mjcf.cli:main"
+urdf2mjcf-calculate-inertia = "urdf2mjcf.tools.calculate_inertia:main"
+urdf2mjcf-simplify-mesh = "urdf2mjcf.tools.simplify_mesh:main"
+urdf2mjcf-generate-collision = "urdf2mjcf.tools.generate_collision_mesh:main"
 
 [build-system]
 requires = ["hatchling"]

@@ -4,8 +4,17 @@ import os
 import pymeshlab as ml
 import argparse
 
-def simplify_mesh(input_file, output_file, target_reduction, translate=None, scale_factor=None):
-    """Simplifies a single mesh file."""
+def simplify_mesh(input_file, output_file, target_reduction=None, target_faces=None, translate=None, scale_factor=None):
+    """Simplifies a single mesh file.
+    
+    Args:
+        input_file: Path to input mesh
+        output_file: Path to output mesh
+        target_reduction: Reduction ratio (0.0-1.0), percentage of faces to remove
+        target_faces: Target number of faces (alternative to target_reduction)
+        translate: Translation vector [x, y, z]
+        scale_factor: Uniform scale factor
+    """
     print(f"Processing: {input_file}")
     try:
         ms = ml.MeshSet()
@@ -32,16 +41,36 @@ def simplify_mesh(input_file, output_file, target_reduction, translate=None, sca
                 freeze=True,
             )
 
-        print(f"Simplifying mesh with reduction: {target_reduction}")
-        # The target reduction is the percentage of faces to remove.
-        # Pymeshlab's filter uses the target percentage of faces to *keep*.
-        target_percentage = 1.0 - target_reduction
+        # Determine simplification parameters
+        current_faces = ms.current_mesh().face_number()
+        print(f"Current mesh has {current_faces} faces")
+        
+        if target_faces is not None:
+            # User specified target number of faces
+            if target_faces >= current_faces:
+                print(f"Target faces ({target_faces}) >= current faces ({current_faces}), skipping simplification")
+                target_percentage = 1.0
+            else:
+                target_percentage = target_faces / current_faces
+                print(f"Simplifying mesh to {target_faces} faces (keeping {target_percentage*100:.1f}% of faces)")
+        elif target_reduction is not None:
+            # User specified reduction ratio (percentage to remove)
+            target_percentage = 1.0 - target_reduction
+            target_face_count = int(current_faces * target_percentage)
+            print(f"Simplifying mesh with reduction: {target_reduction} (keeping {target_percentage*100:.1f}%, target ~{target_face_count} faces)")
+        else:
+            # Default: no reduction
+            print("No reduction specified, keeping original mesh")
+            target_percentage = 1.0
 
-        ms.apply_filter(
-            "meshing_decimation_quadric_edge_collapse",
-            targetperc=target_percentage,
-            preservenormal=True,
-        )
+        if target_percentage < 1.0:
+            ms.apply_filter(
+                "meshing_decimation_quadric_edge_collapse",
+                targetperc=target_percentage,
+                preservenormal=True,
+            )
+            final_faces = ms.current_mesh().face_number()
+            print(f"Simplified mesh has {final_faces} faces")
         # Ensure output directory exists
         output_dir = os.path.dirname(output_file)
         if output_dir:
@@ -69,12 +98,21 @@ def main():
         help="Path to the output file or folder. If not provided, a new file/folder with '_simplified' suffix will be created.",
     )
     parser.add_argument(
+        "-r",
         "--reduction",
         type=float,
-        default=0.5,
-        help="Target reduction ratio (0 to 1), e.g. 0.5 = 50%% fewer faces.",
+        default=None,
+        help="Target reduction ratio (0 to 1), e.g. 0.5 = 50%% fewer faces. Mutually exclusive with --target-faces.",
     )
     parser.add_argument(
+        "-tf",
+        "--target-faces",
+        type=int,
+        default=None,
+        help="Target number of faces to simplify to, e.g. 200000. Mutually exclusive with --reduction.",
+    )
+    parser.add_argument(
+        "-t",
         "--translation",
         type=float,
         nargs=3,
@@ -82,6 +120,7 @@ def main():
         help="The translation [x y z] to apply to the mesh before simplification.",
     )
     parser.add_argument(
+        "-s",
         "--scale",
         type=float,
         default=None,
@@ -92,8 +131,19 @@ def main():
     input_path = args.input_path
     output_path = args.output_path
     reduction = args.reduction
+    target_faces = args.target_faces
     translate = args.translation
     scale_factor = args.scale
+
+    # Validate that only one simplification method is specified
+    if reduction is not None and target_faces is not None:
+        print("Error: Cannot specify both --reduction and --target-faces. Choose one.")
+        return
+    
+    # Default to 50% reduction if neither is specified
+    if reduction is None and target_faces is None:
+        reduction = 0.5
+        print(f"No simplification method specified, using default reduction of {reduction} (50%)")
 
     if not os.path.exists(input_path):
         print(f"Error: Input path '{input_path}' does not exist.")
@@ -108,7 +158,7 @@ def main():
             if filename.lower().endswith(".stl"):
                 input_file = os.path.join(input_path, filename)
                 output_file = os.path.join(output_path, filename)
-                simplify_mesh(input_file, output_file, reduction, translate, scale_factor)
+                simplify_mesh(input_file, output_file, reduction, target_faces, translate, scale_factor)
         print("All STL files in directory processed.")
     elif os.path.isfile(input_path):
         # Input is a file
@@ -124,7 +174,7 @@ def main():
             # If output is a directory, save with same filename inside it
             final_output_path = os.path.join(output_path, os.path.basename(input_path))
 
-        simplify_mesh(input_path, final_output_path, reduction, translate, scale_factor)
+        simplify_mesh(input_path, final_output_path, reduction, target_faces, translate, scale_factor)
         print("STL file processed.")
     else:
         print(f"Error: Input path '{input_path}' is not a valid file or directory.")

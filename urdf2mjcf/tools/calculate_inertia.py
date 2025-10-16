@@ -122,7 +122,8 @@ def print_urdf_inertia(inertia_data):
 	print("-------------------------\n")
 
 
-if __name__ == "__main__":
+def main():
+	"""Main entry point for command-line usage."""
 	try: 
 		parser = argparse.ArgumentParser(
 			description="Calculate the moment of inertia of an STL file given its mass.",
@@ -173,3 +174,7 @@ if __name__ == "__main__":
 	except Exception as e:
    
 		print(f"An unexpected error occurred: {e}{traceback.format_exc()}")
+
+
+if __name__ == "__main__":
+	main()
