@@ -4,7 +4,7 @@ import argparse
 import traceback
 import trimesh
 
-def calculate_inertia(mesh_path, mass, translation=None, orientation=None, scale=0.001):
+def calculate_inertia(mesh_path, mass, translation=None, orientation=None, scale=1.0):
 	"""
 	Calculates the moment of inertia for a given STL file and mass.
 	
@@ -21,8 +21,10 @@ def calculate_inertia(mesh_path, mass, translation=None, orientation=None, scale
 		# Load the mesh from the STL file. Use force='mesh' to ensure we get a
 		# single Trimesh object, not a Scene.
 		mesh = trimesh.load_mesh(mesh_path, force='mesh')
-  
-		mesh.apply_scale(scale)
+
+		if scale != 1.0:
+			print(f"Applying scaling factor of {scale}")
+			mesh.apply_scale(scale)
 
 		# If the mesh is not watertight, it's not a closed volume,
 		# so we can't calculate volume or inertia.
@@ -165,7 +167,7 @@ def main():
 
 		args = parser.parse_args()
 
-		inertia_data = calculate_inertia(args.mesh, args.mass, args.translation, args.orientation)
+		inertia_data = calculate_inertia(args.mesh, args.mass, args.translation, args.orientation, args.scale)
 
 		if inertia_data:
 			print(f"Successfully calculated inertia for '{args.mesh}'.")
