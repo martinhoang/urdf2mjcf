@@ -5,7 +5,7 @@ A powerful command-line tool for converting URDF (Unified Robot Description Form
 ## Features
 
 - **Multiple Input Formats**: Supports URDF, Xacro, and JSON configuration files
-- **ROS2 Integration**: Built-in support for ROS2 control plugins and MuJoCo-ROS utilities
+- **ROS2 Integration**: Built-in support for ROS2 control plugins and MuJoCo-ROS utilities at my fork of AIST [MujocoRosUtils](https://github.com/martinhoang/MujocoRosUtils.git)
 - **Physics Customization**: Configure joint properties, actuators, and simulation parameters
 - **Mesh Processing**: Automatic mesh copying and optional mesh reduction
 - **Flexible Configuration**: CLI arguments, JSON config files, or hybrid approaches
