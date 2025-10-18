@@ -7,7 +7,7 @@ This document tracks the development progress and future plans for the urdf2mjcf
 ## Current Release & Next Steps
 
 ### v0.8.0 - Planned (Next Release) 🎯
-- [ ] Processing multiple meshes (with their colors) inside a DAE file
+- [x] Processing multiple meshes (with their colors) inside a DAE file
 - [ ] Save JSON file with relative package path if relative paths were given at original CLI / config JSON file
 - [ ] Passing additional arguments alongside JSON config file
 - [ ] Add logging system with different verbosity levels

@@ -113,7 +113,14 @@ Create a `config.json` file with your desired settings:
 - `-int, --integrator`: Set the simulation integrator
 - `-ncm, --no-copy-meshes`: Do not copy referenced mesh files to output directory
 - `-mr, --mesh-reduction`: Set the mesh reduction ratio (0.0-1.0)
+- `-sr, --simplify-reduction`: Simplify meshes using pymeshlab (reduction ratio 0.0-1.0)
+- `-stf, --simplify-target-faces`: Simplify meshes to target number of faces
+- `-gcm, --generate-collision-meshes`: Generate convex hull collision meshes
+- `-ci, --calculate-inertia`: Calculate and print inertia for meshes
+- `-cim, --calculate-inertia-mass`: Mass (in kg) to use for inertia calculations
 - `-sp, --save-preprocessed`: Save the intermediate, pre-processed URDF file
+- `-sdm, --separate-dae-meshes`: Extract each mesh/material from DAE as separate STL files with colors (default: combine all into single STL)
+- `-amt, --append-mesh-type`: Append '_visual' or '_collision' to mesh filenames for easy distinguishment
 - `-s, --solver`: Set the simulation solver
 - `-xa, --xacro-args`: Arguments to pass to the xacro processor
 - `-ll, --log-level`: Set the logging level (DEBUG, INFO, WARNING, ERROR)
@@ -137,11 +144,27 @@ urdf2mjcf robot.urdf \
   -djs 800.0 5.0 \
   -dm 1.5 \
   -gc \
+  -sdm \
+  -amt \
   -xa "use_gripper:=true" "hardware_type:=sim_mujoco" \
   -ll DEBUG
 ```
 
-### Example 3: Using JSON Configuration
+### Example 3: DAE Mesh Processing
+```bash
+# Extract separate meshes from DAE files with material preservation
+urdf2mjcf robot.urdf.xacro -o output/ --separate-dae-meshes
+
+# Append mesh type to filenames for easy identification
+urdf2mjcf robot.urdf.xacro -o output/ --append-mesh-type
+# Creates: base_visual.stl, wrist_collision.stl, etc.
+
+# Combined: separate DAE meshes + append type tags
+urdf2mjcf robot.urdf.xacro -o output/ --separate-dae-meshes --append-mesh-type
+# Creates: base_JointGrey_visual.stl, base_Black_visual.stl, wrist2_collision.stl, etc.
+```
+
+### Example 4: Using JSON Configuration
 Create `robot_config.json`:
 ```json
 {
@@ -163,7 +186,7 @@ Then run:
 urdf2mjcf robot_config.json
 ```
 
-### Example 4: Override Config with CLI Arguments
+### Example 5: Override Config with CLI Arguments
 ```bash
 # Load config but override specific settings
 urdf2mjcf robot_config.json -ll DEBUG -o different_output

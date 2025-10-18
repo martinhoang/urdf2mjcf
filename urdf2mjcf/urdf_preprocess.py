@@ -1,15 +1,23 @@
 import os
 import re
 import copy
+import tempfile
 import xml.etree.ElementTree as ET
-from typing import Literal
 from ament_index_python.packages import get_package_share_directory, PackageNotFoundError
 from _utils import (
 	print_base,
 	print_info,
 	print_warning,
 	print_debug,
+	print_confirm,
 )
+
+# Try to import DAE extraction tool
+try:
+	from .tools.extract_dae_meshes import extract_meshes_from_dae
+	EXTRACT_DAE_AVAILABLE = True
+except ImportError:
+	EXTRACT_DAE_AVAILABLE = False
 
 def resolve_path(path):
 	"""
@@ -132,7 +140,7 @@ def _merge_nodes_recursively(nodes):
 	
 	return merged
 
-def preprocess_urdf(urdf_path, compiler_options, default_mesh_dir):
+def preprocess_urdf(urdf_path, compiler_options, default_mesh_dir, separate_dae_meshes=False, append_mesh_type=False):
 	"""Pre-process URDF for MuJoCo compatibility."""
 	print_base("Pre-processing URDF...")
 	urdf_tree = ET.parse(urdf_path)
@@ -142,18 +150,30 @@ def preprocess_urdf(urdf_path, compiler_options, default_mesh_dir):
 	# Final mapping for copy/convert: desired_dest_basename -> {"src": abs_path}
 	###########################
 	absolute_mesh_paths = {}
+	
+	# Temporary directory for DAE extraction during preprocessing
+	temp_dae_extract_dir = tempfile.mkdtemp(prefix="urdf2mjcf_dae_")
 
-	# Find all <link> and their <mesh> elements
+	# Find all <link> and their mesh elements
 	link_nodes = root.findall(".//link")
 	
-	def _get_mesh_path(elements : list, mesh_type: Literal["visual", "collision"]):
-		output_dict = {}
-		if len(elements) == 0:
-			return output_dict
+	for link_node in link_nodes:
+		link_name = link_node.get("name")
+		link_dict = {}
 		
-		for elem in elements:
-			file_path = elem.get("filename", "")
-			src_path = resolve_path(elem.get("filename", ""))
+		# Process visual meshes (with DAE expansion)
+		visual_elements = link_node.findall("visual")
+		for visual_idx, visual_elem in enumerate(visual_elements):
+			geometry = visual_elem.find("geometry")
+			if geometry is None:
+				continue
+			
+			mesh_elem = geometry.find("mesh")
+			if mesh_elem is None:
+				continue
+			
+			file_path = mesh_elem.get("filename", "")
+			src_path = resolve_path(file_path)
 			
 			if not src_path or not os.path.isfile(src_path):
 				raise FileNotFoundError(f"Mesh file at {file_path} not found or could not be resolved.")
@@ -161,34 +181,151 @@ def preprocess_urdf(urdf_path, compiler_options, default_mesh_dir):
 			base_name = os.path.basename(src_path)
 			file_name = os.path.splitext(base_name)[0]
 			file_ext = os.path.splitext(base_name)[1].lower()
-
-			dest_path = base_name
-
-			if file_ext == ".dae":
-				print_warning(f"Mesh '{file_name}' is a DAE file. Will attempt to convert it to STL during processing. Set mesh reduction ratio on the command line to your preference.")
-				dest_path = f"{file_name}.stl"
-
-			# Add mesh path to output dict as a dict or if more than one meshes, append to a list
-			if mesh_type not in output_dict:
-				output_dict[mesh_type] = {"from" : [src_path], "to" : [dest_path]}
+			
+			# Check if it's a DAE file that needs expansion
+			if file_ext == ".dae" and EXTRACT_DAE_AVAILABLE:
+				print_info(f"Expanding DAE file '{base_name}' for link '{link_name}' into multiple visual elements...")
+				
+				try:
+					# Extract meshes from DAE
+					success_count, total_count, dae_mesh_info = extract_meshes_from_dae(
+						src_path,
+						temp_dae_extract_dir,
+						output_format='stl',
+						verbose=False,
+						separate_meshes=separate_dae_meshes
+					)
+					
+					if success_count > 0 and dae_mesh_info:
+						print_confirm(f"-> Extracted {success_count} meshes from '{base_name}'")
+						
+						# Get the parent of visual element (should be the link)
+						parent = link_node
+						visual_insert_idx = list(parent).index(visual_elem)
+						
+						# Remove the original visual element
+						parent.remove(visual_elem)
+						
+						# Create new visual elements for each extracted mesh
+						for mesh_idx, (mesh_name, mesh_data) in enumerate(dae_mesh_info.items()):
+							# Create a new visual element (copy attributes from original)
+							new_visual = ET.Element("visual")
+							
+							# Copy origin if it exists
+							origin = visual_elem.find("origin")
+							if origin is not None:
+								new_origin = copy.deepcopy(origin)
+								new_visual.append(new_origin)
+							
+							# Create geometry with the extracted mesh
+							new_geometry = ET.SubElement(new_visual, "geometry")
+							new_mesh = ET.SubElement(new_geometry, "mesh")
+							
+							extracted_file = mesh_data['file']
+							
+							# Determine the destination filename (with suffix if needed)
+							if append_mesh_type:
+								fname, fext = os.path.splitext(extracted_file)
+								dest_file = f"{fname}_visual{fext}"
+							else:
+								dest_file = extracted_file
+							
+							new_mesh.set("filename", dest_file)
+							
+							# Add material if RGBA is available
+							rgba = mesh_data.get('rgba')
+							if rgba:
+								material_elem = ET.SubElement(new_visual, "material")
+								material_name = f"{link_name}_{mesh_name}_mat"
+								material_elem.set("name", material_name)
+								
+								# Add color sub-element with RGBA
+								color_elem = ET.SubElement(material_elem, "color")
+								rgba_str = f"{rgba[0]} {rgba[1]} {rgba[2]} {rgba[3]}"
+								color_elem.set("rgba", rgba_str)
+								
+								print_debug(f"   -> Added visual '{mesh_name}' with material (RGBA: {rgba_str})")
+							else:
+								print_debug(f"   -> Added visual '{mesh_name}' (no material info)")
+							
+							# Insert the new visual element
+							parent.insert(visual_insert_idx + mesh_idx, new_visual)
+							
+							# Track the mesh for copying (source is original name, dest has suffix)
+							temp_mesh_path = os.path.join(temp_dae_extract_dir, extracted_file)
+							if "visual" not in link_dict:
+								link_dict["visual"] = {"from": [], "to": []}
+							link_dict["visual"]["from"].append(temp_mesh_path)
+							link_dict["visual"]["to"].append(dest_file)
+					else:
+						print_warning(f"Failed to extract meshes from '{base_name}', using fallback single-mesh conversion")
+						# Fallback: treat as single mesh
+						dest_path = f"{file_name}.stl"
+						if append_mesh_type:
+							dest_path = f"{file_name}_visual.stl"
+						mesh_elem.set("filename", dest_path)
+						if "visual" not in link_dict:
+							link_dict["visual"] = {"from": [], "to": []}
+						link_dict["visual"]["from"].append(src_path)
+						link_dict["visual"]["to"].append(dest_path)
+						
+				except Exception as e:
+					print_warning(f"Error extracting DAE '{base_name}': {e}. Using fallback single-mesh conversion.")
+					# Fallback: treat as single mesh
+					dest_path = f"{file_name}.stl"
+					if append_mesh_type:
+						dest_path = f"{file_name}_visual.stl"
+					mesh_elem.set("filename", dest_path)
+					if "visual" not in link_dict:
+						link_dict["visual"] = {"from": [], "to": []}
+					link_dict["visual"]["from"].append(src_path)
+					link_dict["visual"]["to"].append(dest_path)
+			
 			else:
-				# Assume it is already a list from now
-				output_dict[mesh_type]["from"].append(src_path)
-				output_dict[mesh_type]["to"].append(dest_path)
-
-			#! This step is important
-			# Copy back the absolute path to the URDF for mujoco compiler
-			elem.set("filename", dest_path)
-
-		return output_dict
-
-	for link_node in link_nodes:
-		visual_mesh_node = link_node.findall(".//visual/geometry/mesh")
-		collision_mesh_node = link_node.findall(".//collision/geometry/mesh")
-		link_name = link_node.get("name")
-
-		link_dict = _get_mesh_path(visual_mesh_node, "visual")
-		link_dict.update(_get_mesh_path(collision_mesh_node, "collision"))
+				# Not a DAE or extraction not available - handle normally
+				if file_ext == ".dae":
+					print_warning(f"DAE extraction not available (install pycollada and trimesh). Using fallback single-mesh conversion for '{base_name}'.")
+					dest_path = f"{file_name}_visual.stl" if append_mesh_type else f"{file_name}.stl"
+				else:
+					if append_mesh_type:
+						fname, fext = os.path.splitext(base_name)
+						dest_path = f"{fname}_visual{fext}"
+					else:
+						dest_path = base_name
+				
+				mesh_elem.set("filename", dest_path)
+				if "visual" not in link_dict:
+					link_dict["visual"] = {"from": [], "to": []}
+				link_dict["visual"]["from"].append(src_path)
+				link_dict["visual"]["to"].append(dest_path)
+		
+		# Process collision meshes (no DAE expansion needed)
+		collision_mesh_nodes = link_node.findall(".//collision/geometry/mesh")
+		for mesh_elem in collision_mesh_nodes:
+			file_path = mesh_elem.get("filename", "")
+			src_path = resolve_path(file_path)
+			
+			if not src_path or not os.path.isfile(src_path):
+				raise FileNotFoundError(f"Collision mesh file at {file_path} not found or could not be resolved.")
+			
+			base_name = os.path.basename(src_path)
+			file_name = os.path.splitext(base_name)[0]
+			file_ext = os.path.splitext(base_name)[1].lower()
+			
+			if file_ext == ".dae":
+				dest_path = f"{file_name}_collision.stl"
+			else:
+				if append_mesh_type:
+					fname, fext = os.path.splitext(base_name)
+					dest_path = f"{fname}_collision{fext}"
+				else:
+					dest_path = base_name
+			
+			mesh_elem.set("filename", dest_path)
+			if "collision" not in link_dict:
+				link_dict["collision"] = {"from": [], "to": []}
+			link_dict["collision"]["from"].append(src_path)
+			link_dict["collision"]["to"].append(dest_path)
 
 		####################################################################### 
 		# NOTE: DISCLAIMER - This approach is still really heuristic and does not 
@@ -245,6 +382,13 @@ def preprocess_urdf(urdf_path, compiler_options, default_mesh_dir):
 			continue
 
 		absolute_mesh_paths[link_name] = link_dict
+	
+	# Clean up temporary DAE extraction directory
+	# Note: We keep the extracted meshes because they're tracked in absolute_mesh_paths
+	# and will be copied to the final output directory by mesh_ops.copy_mesh_files()
+	# The temp directory will be cleaned up automatically by the OS eventually,
+	# but we could also manually clean it up here if needed.
+	# For now, we leave it since the files are still referenced.
 
 	absolute_mesh_paths_str = "Absolute mesh paths found:"
 	for link_name, value in absolute_mesh_paths.items():

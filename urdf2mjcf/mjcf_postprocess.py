@@ -1,4 +1,5 @@
 import copy
+import os
 import re
 import xml.etree.ElementTree as ET
 
@@ -8,6 +9,7 @@ from _utils import (
     print_debug,
     print_info,
     print_warning,
+    print_confirm,
 )
 
 def post_process_damping_multiplier(root, damping_multiplier):
@@ -750,3 +752,107 @@ def post_process_add_mimic_plugins(root, mimic_joints, default_actuator_gains):
 		print_base(f"-> Created missing position actuators for mimic joints: {', '.join(created_position_actuators)}")
 	if mimic_plugin_joint_names:
 		print_base(f"-> Added ROS mimic joint plugins for joints: {', '.join(mimic_plugin_joint_names)}")
+
+def post_process_add_materials(root, material_info, mesh_dir="assets/"):
+	"""Add material definitions to MJCF based on extracted mesh material information.
+	
+	Only processes visual meshes - collision meshes don't need material information.
+	
+	Args:
+		root: MJCF root element
+		material_info: Dictionary of material information organized by link:
+			{
+				'link_name': {
+					'visual': [
+						{'file': 'mesh.stl', 'material': 'mat_name', 'rgba': [r,g,b,a]},
+						...
+					]
+				}
+			}
+		mesh_dir: Directory where meshes are stored (for matching mesh names to geoms)
+	"""
+	if not material_info:
+		print_base("-> No material information to add to MJCF.")
+		return
+	
+	# Find or create <asset> section
+	asset_node = root.find("asset")
+	if asset_node is None:
+		asset_node = ET.Element("asset")
+		# Insert after <compiler> if exists, otherwise at the beginning
+		compiler_idx = list(root).index(root.find("compiler")) + 1 if root.find("compiler") is not None else 0
+		root.insert(compiler_idx, asset_node)
+	
+	# Track unique materials to avoid duplicates
+	existing_materials = {mat.get("name") for mat in asset_node.findall("material")}
+	added_materials = set()
+	material_count = 0
+	geom_material_assignments = 0
+	
+	# Process each link's visual material info only
+	for link_name, link_materials in material_info.items():
+		# Only process visual meshes
+		if 'visual' not in link_materials:
+			continue
+		
+		for mesh_data in link_materials['visual']:
+			rgba = mesh_data.get('rgba')
+			material_name = mesh_data.get('material')
+			mesh_file = mesh_data.get('file')
+			
+			# Skip meshes without color information
+			if not rgba or not mesh_file:
+				continue
+			
+			# Generate a unique material name
+			# Use material name from DAE if available, otherwise derive from mesh file
+			if material_name:
+				mat_name = f"mat_{material_name}"
+			else:
+				mesh_base = os.path.splitext(mesh_file)[0]
+				mat_name = f"mat_{mesh_base}"
+			
+			# Ensure unique name
+			original_mat_name = mat_name
+			counter = 1
+			while mat_name in existing_materials or mat_name in added_materials:
+				mat_name = f"{original_mat_name}_{counter}"
+				counter += 1
+			
+			# Add material definition to <asset>
+			material_attrib = {
+				"name": mat_name,
+				"rgba": f"{rgba[0]} {rgba[1]} {rgba[2]} {rgba[3]}"
+			}
+			ET.SubElement(asset_node, "material", material_attrib)
+			added_materials.add(mat_name)
+			material_count += 1
+			
+			# Now find the corresponding visual geom(s) and assign the material
+			# MuJoCo stores mesh references in <mesh> elements in <asset>, and geoms reference them by name
+			# The mesh name is typically the filename without extension
+			mesh_ref_base = os.path.splitext(mesh_file)[0]
+			
+			# Find all geoms that reference this mesh
+			# We need to match geoms in the worldbody/body hierarchy
+			for geom in root.findall(".//geom[@mesh]"):
+				geom_mesh = geom.get("mesh")
+				
+				# Try to match by checking if geom's mesh attribute matches our mesh name
+				# This is somewhat heuristic since MuJoCo might modify mesh names during compilation
+				if geom_mesh and (mesh_ref_base in geom_mesh or geom_mesh in mesh_ref_base):
+					# Assign material to this geom
+					geom.set("material", mat_name)
+					geom_material_assignments += 1
+					print_debug(f"-> Assigned material '{mat_name}' (RGBA: {rgba}) to geom with mesh '{geom_mesh}' in link '{link_name}'")
+	
+	if material_count > 0:
+		print_confirm(f"-> Added {material_count} material definitions from DAE files")
+		if geom_material_assignments > 0:
+			print_confirm(f"-> Assigned materials to {geom_material_assignments} visual geoms")
+		else:
+			print_warning("-> Warning: Materials were created but no geoms were assigned (mesh name matching may have failed)")
+	else:
+		print_base("-> No materials added (no valid RGBA data found in visual meshes)")
+
+

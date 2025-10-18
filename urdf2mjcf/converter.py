@@ -102,7 +102,7 @@ class URDFToMJCFConverter:
                 custom_mujoco_elements,
                 urdf_plugins,
                 ros2c_joint_map,
-            ) = urdf_preprocess.preprocess_urdf(urdf_to_process, args.compiler_options, self.default_mesh_dir)
+            ) = urdf_preprocess.preprocess_urdf(urdf_to_process, args.compiler_options, self.default_mesh_dir, args.separate_dae_meshes, args.append_mesh_type)
 
             tracking_progress.append({'name': 'Convert & Copy Meshes'})
             if not args.no_copy_meshes:
@@ -133,6 +133,7 @@ class URDFToMJCFConverter:
                             'reduction': args.simplify_reduction
                         }
                 
+                # Copy mesh files (materials already added to URDF in preprocessing)
                 mesh_ops.copy_mesh_files(
                     absolute_mesh_paths,
                     output_dir,
@@ -191,6 +192,10 @@ class URDFToMJCFConverter:
             mjcf_postprocess.post_process_transform_and_add_custom_plugin(root, plugin_node)
         mjcf_postprocess.post_process_compiler_options(root)
         mjcf_postprocess.post_process_add_light(root)
+        
+        # Note: Materials from DAE files are already in the preprocessed URDF
+        # and will be preserved by MuJoCo during import
+        
         if args.add_clock_publisher:
             mjcf_postprocess.post_process_add_clock_publisher_plugin(root)
         if args.add_ros2_control:

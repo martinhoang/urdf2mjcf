@@ -2381,7 +2381,9 @@ dependencies = [
     { name = "coacd" },
     { name = "mujoco" },
     { name = "open3d" },
+    { name = "pycollada" },
     { name = "pymeshlab" },
+    { name = "tqdm" },
     { name = "trimesh", extra = ["easy"] },
 ]
 
@@ -2390,7 +2392,9 @@ requires-dist = [
     { name = "coacd", specifier = ">=1.0.7" },
     { name = "mujoco", specifier = ">=3.3.6" },
     { name = "open3d", specifier = ">=0.18.0" },
+    { name = "pycollada", specifier = ">=0.8" },
     { name = "pymeshlab", specifier = ">=2025.7" },
+    { name = "tqdm", specifier = ">=4.67.1" },
     { name = "trimesh", extras = ["easy"], specifier = ">=4.0.0" },
 ]
 

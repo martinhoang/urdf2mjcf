@@ -258,6 +258,19 @@ def main():
         help="Save the intermediate, pre-processed URDF file for debugging.",
     )
     advanced_group.add_argument(
+        "-sdm",
+        "--separate-dae-meshes",
+        action="store_true",
+        help="Extract each mesh/material from DAE as separate STL files with colors. Default: combine all into single STL.",
+    )
+    advanced_group.add_argument(
+        "-nmt",
+        "--no-append-mesh-type",
+        action="store_false",
+        dest="append_mesh_type",
+        help="Append '_visual' or '_collision' to mesh filenames for easy distinguishment.",
+    )
+    advanced_group.add_argument(
         "-s",
         "--solver",
         type=str,

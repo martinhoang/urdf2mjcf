@@ -13,6 +13,8 @@ dependencies = [
     "trimesh[easy]>=4.0.0",
     "open3d>=0.18.0",
     "coacd>=1.0.7",
+    "pycollada>=0.8",
+    "tqdm>=4.67.1",
 ]
 
 [project.scripts]
@@ -20,6 +22,7 @@ urdf2mjcf = "urdf2mjcf.cli:main"
 urdf2mjcf-calculate-inertia = "urdf2mjcf.tools.calculate_inertia:main"
 urdf2mjcf-simplify-mesh = "urdf2mjcf.tools.simplify_mesh:main"
 urdf2mjcf-generate-collision = "urdf2mjcf.tools.generate_collision_mesh:main"
+urdf2mjcf-extract-dae = "urdf2mjcf.tools.extract_dae_meshes:main"
 
 [build-system]
 requires = ["hatchling"]

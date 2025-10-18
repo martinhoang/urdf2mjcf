@@ -75,22 +75,42 @@ def copy_mesh_files(absolute_mesh_paths, output_dir, mesh_dir=None, mesh_reducti
 					simplify_meshes=False, simplify_params=None, raise_on_error=True):
 	"""
 	Copy mesh files to output dir.
-	Support STL/OBJ. Convert DAE->STL via pymeshlab.
+	Support STL/OBJ. Convert DAE->STL via pymeshlab or extract multiple meshes from DAE with materials.
 	
 	Args:
 		absolute_mesh_paths: Dictionary of mesh paths organized by link
 		output_dir: Output directory for meshes
 		mesh_dir: Subdirectory name for meshes within output_dir
-		mesh_reduction: Reduction factor for DAE->STL conversion
+		mesh_reduction: Reduction factor for DAE->STL conversion (legacy single-mesh mode)
 		calculate_inertia_params: Dict with 'mass' (required) and optional 'translation', 'orientation', 'scale' for inertia calculation
 		generate_collision: Whether to generate collision meshes using convex hulls
 		simplify_meshes: Whether to simplify meshes using the simplify tool
 		simplify_params: Dict with optional 'reduction' (0.0-1.0), 'target_faces' (int), 'translation', 'scale' for mesh simplification
+		raise_on_error: Whether to raise exceptions on errors
+	
+	Returns:
+		dict: Material information for extracted visual meshes only, organized by link name:
+			{
+				'link_name': {
+					'visual': [
+						{
+							'file': 'mesh_name.stl',
+							'material': 'material_name',
+							'rgba': [r, g, b, a]
+						},
+						...
+					]
+				}
+			}
+			Note: Only visual meshes have material info. Collision meshes don't need materials.
 	"""
 	print_info("Copying mesh files...")
 	if not absolute_mesh_paths:
 		print_base("-> No meshes to copy.")
-		return
+		return {}
+
+	# Material information to be returned
+	material_info = {}
 
 	# Check tool availability and warn if requested but not available
 	if calculate_inertia_params and not CALCULATE_INERTIA_AVAILABLE:
@@ -112,8 +132,15 @@ def copy_mesh_files(absolute_mesh_paths, output_dir, mesh_dir=None, mesh_reducti
 	converted_count = 0
 	ignored_count = 0
 
-	def _copy_with_conflict_check(mesh_type, srcs, dsts):
-		nonlocal copied_count, converted_count, ignored_count
+	def _copy_with_conflict_check(mesh_type, srcs, dsts, link_name):
+		"""Copy or convert meshes.
+		
+		Note: DAE files are already extracted in urdf_preprocess, so here we just copy
+		the extracted STL files. Material information is already in the URDF.
+		
+		Returns: List of dicts with material info for each mesh (empty for now).
+		"""
+		nonlocal copied_count, converted_count, ignored_count, material_info
 
 		is_valid = isinstance(srcs, list) and isinstance(dsts, list)
 		is_valid |= isinstance(srcs, str) and isinstance(dsts, str)
@@ -124,6 +151,8 @@ def copy_mesh_files(absolute_mesh_paths, output_dir, mesh_dir=None, mesh_reducti
 		if isinstance(srcs, str):
 			srcs = [srcs]
 			dsts = [dsts]
+
+		mesh_materials = []  # Track material info for each mesh processed
 
 		for src, dst in zip(srcs, dsts):
 			src_name = os.path.basename(src)
@@ -137,21 +166,30 @@ def copy_mesh_files(absolute_mesh_paths, output_dir, mesh_dir=None, mesh_reducti
 					raise RuntimeError(f"Source mesh file '{src}' does not exist.")
 				else:
 					ignored_count += 1
-				return
+				return mesh_materials
 
 			if dest_ext not in SUPPORTED_FORMATS:
 				raise RuntimeError(f"Destination mesh format '{dest_ext}' not supported for '{src}'->'{dst}'.")
 	
 			if src_ext in SUPPORTED_FORMATS:
+				# Direct copy of STL/OBJ files (including already-extracted DAE meshes)
 				modified_dest = os.path.join(output_mesh_dir, dest_name)
 				try:
 					shutil.copy2(src, modified_dest)
 					copied_count += 1
+					mesh_materials.append({
+						'file': dest_name,
+						'material': None,
+						'rgba': None
+					})
+					print_base(f"Copied '{mesh_type}' mesh '{src_name}' to '{dest_name}'.")
 				except Exception as e:
 					print_warning(f"Could not copy mesh from '{src}'. Error: {e}")
 					raise RuntimeError(f"Failed to copy mesh from '{src}' to '{modified_dest}'.")
 	
 			elif src_ext in CONVERTIBLE_FORMATS:
+				# DAE files that weren't extracted (fallback case)
+				# This shouldn't happen if preprocessing worked correctly
 				if not PYMESHLAB_AVAILABLE:
 					print_error(f"pymeshlab not available. Cannot convert '{src}' from DAE to STL. Ignoring.")
 					raise RuntimeError("pymeshlab is required for DAE to STL conversion but is not installed.")
@@ -160,6 +198,12 @@ def copy_mesh_files(absolute_mesh_paths, output_dir, mesh_dir=None, mesh_reducti
 					simplify_mesh(src, modified_dest, mesh_reduction)
 					print_base(f"-> Converted mesh:\n\tFrom: '{src}' ({src_ext.upper()})\n\tTo: '{modified_dest}' ({dest_ext.upper()})")
 					converted_count += 1
+					mesh_materials.append({
+						'file': dest_name,
+						'material': None,
+						'rgba': None
+					})
+					print_base(f"Copied '{mesh_type}' mesh '{src_name}' to '{dest_name}'.")
 				except Exception as e:
 					print_warning(f"Could not convert mesh from '{src}' (DAE to STL). Error: {e}")
 					if raise_on_error:
@@ -172,8 +216,8 @@ def copy_mesh_files(absolute_mesh_paths, output_dir, mesh_dir=None, mesh_reducti
 					raise RuntimeError(f"Unsupported mesh format '{src_ext}' for file '{os.path.basename(src)}'.")
 				else:
 					ignored_count += 1
-			
-			print_base(f"Copied '{mesh_type}' mesh '{src_name}' to '{dest_name}'.")
+		
+		return mesh_materials
 
 	def _apply_mesh_tools(mesh_file_path, link_name, mesh_type_name):
 		"""Apply optional mesh tools to processed mesh files."""
@@ -239,11 +283,19 @@ def copy_mesh_files(absolute_mesh_paths, output_dir, mesh_dir=None, mesh_reducti
 		if len(mesh_path) == 0:
 			continue
 		
+		# Initialize material info for this link
+		if link not in material_info:
+			material_info[link] = {}
+		
 		if "visual" in mesh_path:
 			visual_src = mesh_path["visual"]["from"]
 			visual_dst = mesh_path["visual"]["to"]
 			print_base(f"Processing 'visual' mesh for link '{link}':\n\tFrom: {visual_src}\n\tTo: {visual_dst}")
-			_copy_with_conflict_check("visual", srcs=visual_src, dsts=visual_dst)
+			visual_materials = _copy_with_conflict_check("visual", srcs=visual_src, dsts=visual_dst, link_name=link)
+			
+			# Store material info for visual meshes
+			if visual_materials:
+				material_info[link]['visual'] = visual_materials
 			
 			# Apply mesh tools to visual meshes
 			if isinstance(visual_dst, list):
@@ -258,7 +310,8 @@ def copy_mesh_files(absolute_mesh_paths, output_dir, mesh_dir=None, mesh_reducti
 			collision_src = mesh_path["collision"]["from"]
 			collision_dst = mesh_path["collision"]["to"]
 			print_base(f"Processing 'collision' mesh for link '{link}':\n\tFrom: {collision_src}\n\tTo: {collision_dst}")
-			_copy_with_conflict_check("collision", srcs=collision_src, dsts=collision_dst)
+			# Collision meshes don't need material info, so we don't store the return value
+			_copy_with_conflict_check("collision", srcs=collision_src, dsts=collision_dst, link_name=link)
 			
 			# Apply mesh tools to collision meshes (excluding collision generation since it's already collision)
 			if isinstance(collision_dst, list):
@@ -284,3 +337,5 @@ def copy_mesh_files(absolute_mesh_paths, output_dir, mesh_dir=None, mesh_reducti
 			print_confirm(f"-> Processed {total_processed} mesh files: {', '.join(summary_parts)}")
 	else:
 		print_base(f"-> No mesh files processed. Output: '{output_mesh_dir}'")
+	
+	return material_info
