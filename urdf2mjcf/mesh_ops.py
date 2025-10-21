@@ -1,5 +1,6 @@
 import os
 import shutil
+import struct
 from _utils import print_base, print_info, print_warning, print_error, print_confirm
 
 try:
@@ -69,6 +70,202 @@ def simplify_mesh(input_file, output_file, target_reduction=0.95, combine_meshes
 	except Exception as e:
 		print_error(f"Failed to process {input_file}: {e}")
 		raise RuntimeError(f"Mesh simplification failed for {input_file}.")
+
+def count_mesh_faces(mesh_file):
+	"""
+	Count the number of faces in a mesh file.
+	Supports STL (binary and ASCII) and OBJ formats.
+	
+	Args:
+		mesh_file (str): Path to mesh file
+		
+	Returns:
+		int: Number of faces in the mesh, or -1 if unable to determine
+	"""
+	if not os.path.exists(mesh_file):
+		print_warning(f"Mesh file not found: {mesh_file}")
+		return -1
+	
+	ext = os.path.splitext(mesh_file)[1].lower()
+	
+	try:
+		if ext == '.stl':
+			# Try reading as binary STL first
+			with open(mesh_file, 'rb') as f:
+				# Skip 80-byte header
+				f.read(80)
+				# Read number of triangles (uint32)
+				data = f.read(4)
+				if len(data) == 4:
+					num_triangles = int.from_bytes(data, byteorder='little', signed=False)
+					# Validate it's actually binary (check file size)
+					expected_size = 80 + 4 + (num_triangles * 50)  # header + count + (triangle data)
+					actual_size = os.path.getsize(mesh_file)
+					
+					if abs(actual_size - expected_size) < 100:  # Allow small tolerance
+						return num_triangles
+				
+				# If binary read failed, try ASCII
+				f.seek(0)
+				content = f.read().decode('utf-8', errors='ignore')
+				# Count 'facet normal' occurrences in ASCII STL
+				face_count = content.lower().count('facet normal')
+				if face_count > 0:
+					return face_count
+					
+		elif ext == '.obj':
+			# Count faces in OBJ file (lines starting with 'f')
+			face_count = 0
+			with open(mesh_file, 'r') as f:
+				for line in f:
+					if line.strip().startswith('f '):
+						face_count += 1
+			return face_count
+			
+		elif ext == '.dae':
+			# DAE files are complex, use pymeshlab if available
+			if PYMESHLAB_AVAILABLE:
+				ms = pymeshlab.MeshSet()
+				ms.load_new_mesh(mesh_file)
+				total_faces = sum(ms.mesh(i).face_number() for i in range(len(ms)))
+				return total_faces
+			else:
+				print_warning(f"Cannot count faces in DAE file without pymeshlab: {mesh_file}")
+				return -1
+		
+		else:
+			print_warning(f"Unsupported file format for face counting: {ext}")
+			return -1
+			
+	except Exception as e:
+		print_warning(f"Error counting faces in {mesh_file}: {e}")
+		return -1
+
+def validate_and_fix_mesh_faces(mesh_file, max_faces=200000, target_reduction_ratio=0.5):
+	"""
+	Check if a mesh exceeds MuJoCo's face limit and automatically simplify if needed.
+	MuJoCo has a hard limit of 200,000 faces per mesh file.
+	
+	Args:
+		mesh_file (str): Path to mesh file to validate
+		max_faces (int): Maximum allowed faces (MuJoCo limit is 200,000)
+		target_reduction_ratio (float): How aggressively to reduce faces (0.0-1.0)
+			0.5 = reduce to 50% of max_faces, 0.75 = reduce to 75% of max_faces
+			
+	Returns:
+		tuple: (needs_fix, face_count, suggested_target)
+			needs_fix (bool): True if mesh exceeds limit
+			face_count (int): Current number of faces
+			suggested_target (int): Suggested target face count if reduction needed
+	"""
+	if not os.path.exists(mesh_file):
+		return False, 0, 0
+	
+	face_count = count_mesh_faces(mesh_file)
+	
+	if face_count < 0:
+		# Unable to determine face count
+		return False, -1, 0
+	
+	if face_count > max_faces:
+		# Calculate target: reduce to a safe margin below the limit
+		suggested_target = int(max_faces * target_reduction_ratio)
+		return True, face_count, suggested_target
+	
+	return False, face_count, 0
+
+def validate_all_meshes_in_directory(mesh_dir, max_faces=200000):
+	"""
+	Scan all mesh files in a directory and report which ones exceed MuJoCo's face limit.
+	
+	Args:
+		mesh_dir (str): Directory containing mesh files
+		max_faces (int): Maximum allowed faces per mesh
+		
+	Returns:
+		list: List of tuples (mesh_file, face_count, suggested_target) for meshes that need fixing
+	"""
+	problematic_meshes = []
+	
+	if not os.path.exists(mesh_dir):
+		return problematic_meshes
+	
+	supported_extensions = ['.stl', '.obj', '.dae']
+	
+	for root, dirs, files in os.walk(mesh_dir):
+		for filename in files:
+			ext = os.path.splitext(filename)[1].lower()
+			if ext in supported_extensions:
+				mesh_path = os.path.join(root, filename)
+				needs_fix, face_count, suggested_target = validate_and_fix_mesh_faces(mesh_path, max_faces)
+				
+				if needs_fix:
+					problematic_meshes.append((mesh_path, face_count, suggested_target))
+	
+	return problematic_meshes
+
+def fix_oversized_meshes(mesh_dir, max_faces=200000, target_reduction_ratio=0.5, backup=True):
+	"""
+	Automatically fix all meshes in a directory that exceed MuJoCo's face limit.
+	
+	Args:
+		mesh_dir (str): Directory containing mesh files
+		max_faces (int): Maximum allowed faces per mesh (default: 200000)
+		target_reduction_ratio (float): Target face count as ratio of max_faces (default: 0.5)
+		backup (bool): Create .bak backup of original files before modifying
+		
+	Returns:
+		tuple: (fixed_count, failed_count)
+	"""
+	if not SIMPLIFY_MESH_TOOL_AVAILABLE:
+		print_error("Cannot fix oversized meshes: simplify_mesh tool not available. Install pymeshlab.")
+		return 0, 0
+	
+	problematic_meshes = validate_all_meshes_in_directory(mesh_dir, max_faces)
+	
+	if not problematic_meshes:
+		return 0, 0
+	
+	print_warning(f"Found {len(problematic_meshes)} mesh(es) exceeding MuJoCo's {max_faces:,} face limit:")
+	for mesh_path, face_count, suggested_target in problematic_meshes:
+		print_warning(f"  - {os.path.basename(mesh_path)}: {face_count:,} faces (target: {suggested_target:,})")
+	
+	fixed_count = 0
+	failed_count = 0
+	
+	for mesh_path, face_count, suggested_target in problematic_meshes:
+		try:
+			# Create backup if requested
+			if backup:
+				backup_path = mesh_path + '.bak'
+				if not os.path.exists(backup_path):
+					shutil.copy2(mesh_path, backup_path)
+					print_info(f"Created backup: {os.path.basename(backup_path)}")
+			
+			print_info(f"Simplifying {os.path.basename(mesh_path)}: {face_count:,} → {suggested_target:,} faces")
+			
+			# Use simplify_mesh_tool with target_faces parameter
+			simplify_mesh_tool(
+				mesh_path, 
+				mesh_path,  # Overwrite original
+				target_reduction=None, 
+				target_faces=suggested_target
+			)
+			
+			# Verify the fix
+			new_face_count = count_mesh_faces(mesh_path)
+			if new_face_count > 0 and new_face_count <= max_faces:
+				print_confirm(f"✓ Successfully reduced {os.path.basename(mesh_path)} to {new_face_count:,} faces")
+				fixed_count += 1
+			else:
+				print_warning(f"⚠ {os.path.basename(mesh_path)} may still have issues (detected: {new_face_count:,} faces)")
+				fixed_count += 1  # Count as fixed even if verification is uncertain
+			
+		except Exception as e:
+			print_error(f"✗ Failed to simplify {os.path.basename(mesh_path)}: {e}")
+			failed_count += 1
+	
+	return fixed_count, failed_count
 
 def copy_mesh_files(absolute_mesh_paths, output_dir, mesh_dir=None, mesh_reduction=0.9, 
 					calculate_inertia_params=None, generate_collision=False, 

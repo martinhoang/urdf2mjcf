@@ -217,6 +217,21 @@ def main():
         help="Set the mesh reduction ratio, 0.0 for no reduction and 1.0 for full reduction.",
     )
     advanced_group.add_argument(
+        "-nvmf",
+        "--no-validate-mesh-faces",
+        action="store_false",
+        dest="validate_mesh_faces",
+        help="Disable automatic mesh face validation and fixing.",
+    )
+    advanced_group.add_argument(
+        "-mfl",
+        "--max-faces-limit",
+        type=int,
+        default=200000,
+        metavar="COUNT",
+        help="Maximum faces per mesh file (MuJoCo limit: 200000, default: 200000).",
+    )
+    advanced_group.add_argument(
         "-sr",
         "--simplify-reduction",
         type=float,

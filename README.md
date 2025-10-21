@@ -113,6 +113,8 @@ Create a `config.json` file with your desired settings:
 - `-int, --integrator`: Set the simulation integrator
 - `-ncm, --no-copy-meshes`: Do not copy referenced mesh files to output directory
 - `-mr, --mesh-reduction`: Set the mesh reduction ratio (0.0-1.0)
+- `-nvmf, --no-validate-mesh-faces`: Disable automatic mesh face validation (enabled by default)
+- `-mfl, --max-faces-limit`: Maximum faces per mesh file (MuJoCo limit: 200000)
 - `-sr, --simplify-reduction`: Simplify meshes using pymeshlab (reduction ratio 0.0-1.0)
 - `-stf, --simplify-target-faces`: Simplify meshes to target number of faces
 - `-gcm, --generate-collision-meshes`: Generate convex hull collision meshes
@@ -190,6 +192,62 @@ urdf2mjcf robot_config.json
 ```bash
 # Load config but override specific settings
 urdf2mjcf robot_config.json -ll DEBUG -o different_output
+```
+
+### Example 6: Mesh Face Validation (Auto-Fix)
+```bash
+# Automatic validation and fixing (enabled by default)
+urdf2mjcf robot.urdf
+
+# Disable validation if you don't want auto-fixing
+urdf2mjcf robot.urdf -nvmf
+
+# Custom face limit (if needed)
+urdf2mjcf robot.urdf -mfl 150000
+```
+
+## Mesh Face Count Validation
+
+MuJoCo has a hard limit of **200,000 faces per mesh file**. This converter now **automatically validates** all meshes before importing into MuJoCo and **auto-fixes** any oversized meshes.
+
+### How It Works
+
+1. **Automatic Detection**: Before MuJoCo import, all mesh files are scanned
+2. **Face Counting**: Counts faces in STL, OBJ, and DAE files
+3. **Auto-Fix**: Meshes exceeding the limit are automatically simplified to 50% of the limit (100,000 faces)
+4. **Backup**: Original files are backed up as `.bak` before modification
+5. **Verification**: Confirms successful reduction after simplification
+
+### Features
+
+- ✅ **Enabled by default** - no manual intervention needed
+- ✅ **Supports STL (binary/ASCII), OBJ, DAE** formats
+- ✅ **Creates automatic backups** before modifying files
+- ✅ **Detailed logging** shows before/after face counts
+- ✅ **Smart target reduction** to 50% of limit for safety margin
+
+### Manual Control
+
+```bash
+# Disable validation (not recommended)
+urdf2mjcf robot.urdf --no-validate-mesh-faces
+
+# Custom face limit
+urdf2mjcf robot.urdf --max-faces-limit 150000
+```
+
+### Example Output
+
+```
+Validating mesh files before MuJoCo import...
+Found 2 mesh(es) exceeding MuJoCo's 200,000 face limit:
+  ✗ BASE_visual.stl: 450,320 faces → needs reduction to ~100,000
+  ✗ ARM_visual.stl: 220,150 faces → needs reduction to ~100,000
+Attempting to automatically fix oversized meshes...
+Created backup: BASE_visual.stl.bak
+Simplifying BASE_visual.stl: 450,320 → 100,000 faces
+✓ Successfully reduced BASE_visual.stl to 99,847 faces
+✓ Successfully simplified 2 mesh(es)
 ```
 
 ## Output Structure

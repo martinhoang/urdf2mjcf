@@ -152,6 +152,42 @@ class URDFToMJCFConverter:
             if args.save_preprocessed:
                 print_info(f"-> Saved pre-processed URDF to '{preprocessed_urdf_path}'")
 
+            # Validate mesh face counts before MuJoCo import
+            if args.validate_mesh_faces:
+                tracking_progress.append({'name': 'Validate Mesh Face Counts'})
+                print_info("Validating mesh files before MuJoCo import...")
+                mesh_dir_full_path = os.path.join(output_dir, self.default_mesh_dir)
+                
+                if os.path.exists(mesh_dir_full_path):
+                    problematic = mesh_ops.validate_all_meshes_in_directory(
+                        mesh_dir_full_path,
+                        max_faces=args.max_faces_limit
+                    )
+                    
+                    if problematic:
+                        print_warning(f"Found {len(problematic)} mesh(es) exceeding MuJoCo's {args.max_faces_limit:,} face limit:")
+                        for mesh_path, face_count, suggested_target in problematic:
+                            print_warning(f"  ✗ {os.path.basename(mesh_path)}: {face_count:,} faces → needs reduction to ~{suggested_target:,}")
+                        
+                        print_info("Attempting to automatically fix oversized meshes...")
+                        fixed, failed = mesh_ops.fix_oversized_meshes(
+                            mesh_dir_full_path,
+                            max_faces=args.max_faces_limit,
+                            target_reduction_ratio=0.5,  # Reduce to 50% of limit for safety margin
+                            backup=True
+                        )
+                        
+                        if fixed > 0:
+                            print_confirm(f"✓ Successfully simplified {fixed} mesh(es)")
+                        if failed > 0:
+                            print_error(f"✗ Failed to simplify {failed} mesh(es) - MuJoCo import may fail")
+                            if not args.traceback:
+                                print_info("Use --traceback flag to see detailed error information")
+                    else:
+                        print_confirm("✓ All mesh files are within MuJoCo's face count limits")
+                else:
+                    print_info(f"No mesh directory found at '{mesh_dir_full_path}', skipping validation")
+
             print_info(f"Loading pre-processed URDF to Mujoco: {preprocessed_urdf_path}")
             tracking_progress.append({'name': 'Import URDF to Mujoco'})
             model = mujoco.MjModel.from_xml_path(preprocessed_urdf_path)

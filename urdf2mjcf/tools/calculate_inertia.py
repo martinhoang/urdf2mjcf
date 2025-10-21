@@ -31,8 +31,8 @@ def calculate_inertia(mesh_path, mass, translation=None, orientation=None, scale
 		if not mesh.is_watertight:
 			print(f"Warning: Mesh '{mesh_path}' is not watertight. Trying to fix it.")
 			if not mesh.fill_holes():
-				print(f"Error: Could not make the mesh '{mesh_path}' watertight. Cannot calculate inertia.")
-				return None
+				print(f"Warning: Could not make the mesh '{mesh_path}' watertight. Attempt to calculate inertia anyways.")
+				# return None
 
 		# To set the mass, we must first calculate the density based on the
 		# mesh's volume and the desired mass.
