@@ -46,13 +46,15 @@ def _parse_attr_string(attr_str, separator=" "):
 	- "class='visual' group='2'" (separator=" ")
 	- "class='visual';group='2'" (separator=";")  
 	- "class='visual',group='2'" (separator=",")
+	- "name:='value'" (ROS-style assignment with :=)
 	- "pos='1.0 2.0 3.0' size='0.5 0.5 0.5'" (space-separated numbers in quotes)
 	"""
 	attrs = {}
 	duplicate_keys = set()
 	
-	# Use regex to find all key=value pairs directly, handling quoted values that may contain spaces
-	pattern = r"(\w+)=(['\"])(.*?)\2"
+	# Use regex to find all key=value or key:=value pairs, handling quoted values that may contain spaces
+	# Supports both = and := syntax
+	pattern = r"(\w+):?=(['\"])(.*?)\2"
 	matches = re.findall(pattern, attr_str)
 	
 	for match in matches:
@@ -63,7 +65,7 @@ def _parse_attr_string(attr_str, separator=" "):
 		attrs[key] = value
 	
 	if not attrs:
-		print_warning(f"Could not parse attribute string: '{attr_str}'. Expected format like key1='value1'{separator}key2='value2'")
+		print_warning(f"Could not parse attribute string: '{attr_str}'. Expected format like key1='value1'{separator}key2='value2' or key:='value'")
 	
 	return attrs
 
@@ -110,6 +112,7 @@ def _parse_custom_syntax(elem):
 	- inject_attr="key1='value1' key2='value2'"
 	- inject_attrs="key1='value1';key2='value2'"  
 	- replace_attrs="key1='value1',key2='value2'"
+	- inject_children="key1='value1',key2='value2'"
 	"""
 	operations = []
 	
@@ -140,6 +143,13 @@ def _parse_custom_syntax(elem):
 			attrs = _parse_attr_string(replace_attrs, separator=",")
 			if attrs:
 				operations.append(("replace", attrs))
+	
+	# Handle inject_children (comma-separated attributes to match)
+	inject_children = elem.get("inject_children")
+	if inject_children:
+		attrs = _parse_attr_string(inject_children, separator=",")
+		if attrs:
+			operations.append(("inject_children", attrs))
 	
 	return operations
 
@@ -223,10 +233,63 @@ def post_process_inject_custom_mujoco_elements(root, elements):
 		# Parse custom syntax attributes
 		custom_operations = _parse_custom_syntax(elem)
 		
+		# Debug: Log what operations were found
+		elem_attrs_str = ", ".join([f"{k}='{v}'" for k, v in elem.attrib.items()])
+		if custom_operations:
+			ops_str = ", ".join([f"{op[0]}" for op in custom_operations])
+			print_debug(f"Processing <{elem.tag} {elem_attrs_str}> with operations: [{ops_str}]")
+		
+		# Handle inject_children operation specially
+		inject_children_op = next((op for op in custom_operations if op[0] == "inject_children"), None)
+		if inject_children_op:
+			_, match_attrs = inject_children_op
+			
+			print_debug(f"Found inject_children operation with match attributes: {match_attrs}")
+			
+			# Find all matching elements in the MJCF that match the specified attributes
+			# We need to search for elements with the same tag as elem and matching attributes
+			search_context = parent_context if parent_context is not None else root
+			
+			# Build XPath query to find matching elements
+			xpath_parts = [elem.tag]
+			for attr_name, attr_value in match_attrs.items():
+				xpath_parts.append(f"[@{attr_name}='{attr_value}']")
+			xpath_query = "".join(xpath_parts)
+			
+			print_debug(f"Searching with XPath: {xpath_query}")
+			
+			# Search for matching elements
+			matching_targets = search_context.findall(f".//{xpath_query}")
+			
+			print_debug(f"Found {len(matching_targets)} matching target(s)")
+			
+			if matching_targets:
+				# Inject all children of this element into each matching target
+				children_to_inject = list(elem)  # Get all child elements
+				
+				for target_node in matching_targets:
+					target_attrs_str = ", ".join([f"{k}='{v}'" for k, v in target_node.attrib.items()])
+					print_info(f"Injecting {len(children_to_inject)} child element(s) into <{target_node.tag} {target_attrs_str}>")
+					
+					for child in children_to_inject:
+						child_copy = copy.deepcopy(child)
+						target_node.append(child_copy)
+						child_attrs_str = ", ".join([f"{k}='{v}'" for k, v in child_copy.attrib.items()])
+						print_confirm(f"  -> Injected <{child_copy.tag} {child_attrs_str}> into matching <{target_node.tag}>")
+			else:
+				match_attrs_str = ", ".join([f"{k}='{v}'" for k, v in match_attrs.items()])
+				context_desc = f"within {parent_context.tag}" if parent_context is not None else "globally"
+				print_warning(f"No matching <{elem.tag}> elements found with attributes [{match_attrs_str}] {context_desc}")
+			
+			# IMPORTANT: Always return here - do NOT add this element to the MJCF
+			# The inject_children operation consumes the element entirely
+			return
+		
+		# Handle other custom operations (inject_attr, replace_attrs, etc.)
 		if custom_operations:
 			# Remove custom syntax attributes from matching criteria
 			matching_attrs = {k: v for k, v in elem.attrib.items() 
-							if k not in ["inject_attr", "inject_attrs", "replace_attrs"]}
+							if k not in ["inject_attr", "inject_attrs", "replace_attrs", "inject_children"]}
 			elem_for_matching = ET.Element(elem.tag, matching_attrs)
 			
 			# Find matching nodes in the appropriate context
@@ -279,11 +342,16 @@ def post_process_inject_custom_mujoco_elements(root, elements):
 		matching_nodes = xml_utils.find_matching_elements(root, elem)
 		
 		if matching_nodes:
-			# Inject children into matching existing elements
+			# Inject children and attributes into matching existing elements
 			for target_node in matching_nodes:
 				attrs_str = ", ".join([f"{k}='{v}'" for k, v in elem.attrib.items()])
 				target_attrs_str = ", ".join([f"{k}='{v}'" for k, v in target_node.attrib.items()])
 				print_info(f"Injecting element <{elem.tag} {attrs_str}> into existing element: <{target_node.tag} {target_attrs_str}>")
+				
+				# Copy attributes from source to target
+				for attr_name, attr_value in elem.attrib.items():
+					target_node.set(attr_name, attr_value)
+					print_debug(f"Copied attribute {attr_name}='{attr_value}' to existing <{target_node.tag}>")
 				
 				# Copy children from the injected element to the target
 				for child in elem:
@@ -297,6 +365,13 @@ def post_process_inject_custom_mujoco_elements(root, elements):
 		if target_node is None:
 			target_node = xml_utils.ensure_node_before_worldbody(root, elem.tag)
 			print_debug(f"Created new <{elem.tag}> tag in MJCF.")
+		
+		# Copy attributes from source element to target
+		for attr_name, attr_value in elem.attrib.items():
+			target_node.set(attr_name, attr_value)
+			print_debug(f"Copied attribute {attr_name}='{attr_value}' to <{elem.tag}>")
+		
+		# Copy children from source element to target
 		for child in elem:
 			child_copy = copy.deepcopy(child)
 			target_node.append(child_copy)

@@ -2,6 +2,7 @@ import os
 import re
 import copy
 import tempfile
+import numpy as np
 import xml.etree.ElementTree as ET
 from ament_index_python.packages import get_package_share_directory, PackageNotFoundError
 from _utils import (
@@ -18,6 +19,136 @@ try:
 	EXTRACT_DAE_AVAILABLE = True
 except ImportError:
 	EXTRACT_DAE_AVAILABLE = False
+
+def rotation_matrix_from_rpy(roll, pitch, yaw):
+	"""
+	Create a 3x3 rotation matrix from roll, pitch, yaw (in radians).
+	Uses ZYX Euler angle convention (yaw-pitch-roll).
+	"""
+	cr, sr = np.cos(roll), np.sin(roll)
+	cp, sp = np.cos(pitch), np.sin(pitch)
+	cy, sy = np.cos(yaw), np.sin(yaw)
+	
+	# Rotation matrices
+	Rx = np.array([[1, 0, 0],
+				   [0, cr, -sr],
+				   [0, sr, cr]])
+	
+	Ry = np.array([[cp, 0, sp],
+				   [0, 1, 0],
+				   [-sp, 0, cp]])
+	
+	Rz = np.array([[cy, -sy, 0],
+				   [sy, cy, 0],
+				   [0, 0, 1]])
+	
+	# Combined rotation: R = Rz * Ry * Rx (ZYX convention)
+	return Rz @ Ry @ Rx
+
+def transform_inertia_tensor(inertia_matrix, rotation_matrix):
+	"""
+	Transform an inertia tensor by a rotation matrix.
+	I' = R * I * R^T
+	
+	Args:
+		inertia_matrix: 3x3 inertia tensor
+		rotation_matrix: 3x3 rotation matrix
+	
+	Returns:
+		Transformed 3x3 inertia tensor
+	"""
+	return rotation_matrix @ inertia_matrix @ rotation_matrix.T
+
+def zero_inertial_orientation(link_node):
+	"""
+	Transform inertial properties to remove non-zero RPY orientation.
+	The inertia tensor is rotated to the link frame with zero orientation.
+	
+	Args:
+		link_node: ET.Element representing a <link> node
+	
+	Returns:
+		True if transformation was applied, False otherwise
+	"""
+	inertial = link_node.find("inertial")
+	if inertial is None:
+		return False
+	
+	origin = inertial.find("origin")
+	if origin is None:
+		return False
+	
+	rpy_str = origin.get("rpy", "0 0 0")
+	rpy_parts = rpy_str.strip().split()
+	
+	if len(rpy_parts) != 3:
+		print_warning(f"Invalid RPY format in inertial origin: '{rpy_str}'")
+		return False
+	
+	try:
+		# Parse RPY values (may contain expressions like ${pi/2})
+		roll_str, pitch_str, yaw_str = rpy_parts
+		
+		# Simple expression evaluator for common patterns
+		def eval_expr(expr_str):
+			# Replace ${...} with the expression inside
+			expr_str = re.sub(r'\$\{([^}]+)\}', r'\1', expr_str)
+			# Replace 'pi' with its value
+			expr_str = expr_str.replace('pi', str(np.pi))
+			# Evaluate the expression
+			return float(eval(expr_str))
+		
+		roll = eval_expr(roll_str)
+		pitch = eval_expr(pitch_str)
+		yaw = eval_expr(yaw_str)
+		
+		# Check if RPY is already zero (within tolerance)
+		if abs(roll) < 1e-9 and abs(pitch) < 1e-9 and abs(yaw) < 1e-9:
+			return False  # Already zero, no transformation needed
+		
+		# Get the inertia values
+		inertia_elem = inertial.find("inertia")
+		if inertia_elem is None:
+			return False
+		
+		ixx = float(inertia_elem.get("ixx", "0"))
+		ixy = float(inertia_elem.get("ixy", "0"))
+		ixz = float(inertia_elem.get("ixz", "0"))
+		iyy = float(inertia_elem.get("iyy", "0"))
+		iyz = float(inertia_elem.get("iyz", "0"))
+		izz = float(inertia_elem.get("izz", "0"))
+		
+		# Build the inertia tensor
+		inertia_tensor = np.array([[ixx, ixy, ixz],
+									[ixy, iyy, iyz],
+									[ixz, iyz, izz]])
+		
+		# Create rotation matrix from RPY
+		rot_matrix = rotation_matrix_from_rpy(roll, pitch, yaw)
+		
+		# Transform the inertia tensor
+		inertia_transformed = transform_inertia_tensor(inertia_tensor, rot_matrix)
+		
+		# Update the inertia values in the XML
+		inertia_elem.set("ixx", f"{inertia_transformed[0, 0]:.10g}")
+		inertia_elem.set("ixy", f"{inertia_transformed[0, 1]:.10g}")
+		inertia_elem.set("ixz", f"{inertia_transformed[0, 2]:.10g}")
+		inertia_elem.set("iyy", f"{inertia_transformed[1, 1]:.10g}")
+		inertia_elem.set("iyz", f"{inertia_transformed[1, 2]:.10g}")
+		inertia_elem.set("izz", f"{inertia_transformed[2, 2]:.10g}")
+		
+		# Set RPY to zero
+		origin.set("rpy", "0 0 0")
+		
+		link_name = link_node.get("name", "unknown")
+		print_debug(f"   -> Zeroed inertial orientation for link '{link_name}' (was: {roll:.4f} {pitch:.4f} {yaw:.4f})")
+		
+		return True
+		
+	except Exception as e:
+		link_name = link_node.get("name", "unknown")
+		print_warning(f"Failed to transform inertial for link '{link_name}': {e}")
+		return False
 
 def resolve_path(path):
 	"""
@@ -140,7 +271,7 @@ def _merge_nodes_recursively(nodes):
 	
 	return merged
 
-def preprocess_urdf(urdf_path, compiler_options, default_mesh_dir, separate_dae_meshes=False, append_mesh_type=False):
+def preprocess_urdf(urdf_path, compiler_options, default_mesh_dir, separate_dae_meshes=False, append_mesh_type=False, zero_inertial_rpy=True):
 	"""Pre-process URDF for MuJoCo compatibility."""
 	print_base("Pre-processing URDF...")
 	urdf_tree = ET.parse(urdf_path)
@@ -156,6 +287,16 @@ def preprocess_urdf(urdf_path, compiler_options, default_mesh_dir, separate_dae_
 
 	# Find all <link> and their mesh elements
 	link_nodes = root.findall(".//link")
+	
+	# First pass: Zero inertial orientations if requested
+	if zero_inertial_rpy:
+		print_info("Zeroing inertial orientations (transforming inertia tensors)...")
+		transformed_count = 0
+		for link_node in link_nodes:
+			if zero_inertial_orientation(link_node):
+				transformed_count += 1
+		if transformed_count > 0:
+			print_confirm(f"-> Transformed {transformed_count} inertial orientation(s) to zero RPY")
 	
 	for link_node in link_nodes:
 		link_name = link_node.get("name")

@@ -121,6 +121,7 @@ Create a `config.json` file with your desired settings:
 - `-ci, --calculate-inertia`: Calculate and print inertia for meshes
 - `-cim, --calculate-inertia-mass`: Mass (in kg) to use for inertia calculations
 - `-sp, --save-preprocessed`: Save the intermediate, pre-processed URDF file
+- `-nzi, --no-zero-inertial-rpy`: Disable automatic inertial tensor transformation to zero RPY (enabled by default)
 - `-sdm, --separate-dae-meshes`: Extract each mesh/material from DAE as separate STL files with colors (default: combine all into single STL)
 - `-amt, --append-mesh-type`: Append '_visual' or '_collision' to mesh filenames for easy distinguishment
 - `-s, --solver`: Set the simulation solver
@@ -249,6 +250,146 @@ Simplifying BASE_visual.stl: 450,320 → 100,000 faces
 ✓ Successfully reduced BASE_visual.stl to 99,847 faces
 ✓ Successfully simplified 2 mesh(es)
 ```
+
+## Inertial Tensor Transformation
+
+The converter **automatically transforms inertial properties** to remove non-zero RPY orientations. This ensures all inertial frames have `rpy="0 0 0"` by properly rotating the inertia tensor.
+
+### Why This Matters
+The current version of MuJoCo (3.3.4) does not support non-zero RPY values in inertial frames, which can lead to incorrect physics simulation if the inertia tensor is not aligned with the principal axes.
+Many URDF files have rotated inertial frames like:
+```xml
+<inertial>
+  <origin xyz="0 0 0.0215" rpy="1.5708 0 0"/>  <!-- pi/2 rotation -->
+  <mass value="0.010"/>
+  <inertia ixx="0.001" ixy="0.0" ixz="0.0" 
+           iyy="0.002" iyz="0.0" izz="0.003"/>
+</inertial>
+```
+
+The converter transforms this to:
+```xml
+<inertial>
+  <origin xyz="0 0 0.0215" rpy="0 0 0"/>  <!-- Zero rotation -->
+  <mass value="0.010"/>
+  <inertia ixx="0.002" ixy="0.0" ixz="0.0"  <!-- Transformed values -->
+           iyy="0.001" iyz="0.0" izz="0.003"/>
+</inertial>
+```
+
+### Features
+
+- ✅ **Enabled by default** - automatic transformation
+- ✅ **Mathematically correct** - uses proper rotation matrix transformation: I' = R·I·R^T
+- ✅ **Supports expressions** - handles `${pi/2}`, `${pi}`, math expressions
+- ✅ **Preserves physics** - identical dynamics in MuJoCo
+
+### Manual Control
+
+```bash
+# Disable transformation (keep original RPY values)
+urdf2mjcf robot.urdf --no-zero-inertial-rpy
+```
+
+### How It Works
+
+1. Parses RPY values (including expressions like `${pi/2}`)
+2. Extracts the 3×3 inertia tensor from ixx, ixy, ixz, iyy, iyz, izz
+3. Creates rotation matrix R from roll-pitch-yaw
+4. Transforms inertia: **I'** = **R** · **I** · **R**^T
+5. Sets RPY to `0 0 0` and updates inertia values
+
+## Custom MJCF Element Injection
+
+The converter supports powerful **custom syntax operations** for injecting and modifying MJCF elements directly from your URDF file using special `<mujoco>` tags.
+
+### Supported Operations
+
+#### 1. `inject_attr` / `inject_attrs`
+Add or overwrite attributes on matching elements:
+```xml
+<mujoco>
+  <worldbody>
+    <geom inject_attr="class='visual' group='2'" name="my_geom"/>
+  </worldbody>
+</mujoco>
+```
+
+#### 2. `replace_attrs`
+Replace existing attributes (only if they exist):
+```xml
+<mujoco>
+  <worldbody>
+    <geom replace_attrs="rgba='1 0 0 1'" name="my_geom"/>
+  </worldbody>
+</mujoco>
+```
+
+#### 3. `inject_children` (NEW!)
+Inject child elements into all matching parent elements:
+```xml
+<mujoco>
+  <worldbody>
+    <body inject_children="name='gripper/l_gripper_bend'">
+      <site name="gripper_site" pos="0 0 0" rgba="0.6 0.6 0.6 1" size="0.002" type="sphere"/>
+    </body>
+  </worldbody>
+</mujoco>
+```
+
+This finds all `<body>` elements with `name="gripper/l_gripper_bend"` and injects the `<site>` element into each of them.
+
+### How It Works
+
+1. **Parser** extracts `<mujoco>` tags from your URDF
+2. **Matcher** finds target elements in the generated MJCF using attributes
+3. **Injector** applies operations (add attributes, replace values, inject children)
+
+### Examples
+
+#### Example 1: Add Visual Properties
+```xml
+<mujoco>
+  <asset>
+    <material inject_attrs="specular='0.5';shininess='0.25'" name="metal"/>
+  </asset>
+</mujoco>
+```
+
+#### Example 2: Inject Sites into Multiple Bodies
+```xml
+<mujoco>
+  <worldbody>
+    <!-- Inject site into left gripper -->
+    <body inject_children="name='left_gripper'">
+      <site name="left_tip" pos="0 0 0.05" type="sphere" size="0.01"/>
+    </body>
+    
+    <!-- Inject site into right gripper -->
+    <body inject_children="name='right_gripper'">
+      <site name="right_tip" pos="0 0 0.05" type="sphere" size="0.01"/>
+    </body>
+  </worldbody>
+</mujoco>
+```
+
+#### Example 3: Conditional Replacement
+```xml
+<mujoco>
+  <worldbody>
+    <geom replace_attrs="class='collision',rgba='0.5 0.5 0.5 0.3':class='visual'"/>
+  </worldbody>
+</mujoco>
+```
+
+### Syntax Reference
+
+| Operation | Syntax | Purpose |
+|-----------|--------|---------|
+| `inject_attr` | `key='value' key2='value2'` | Space-separated, add/overwrite attributes |
+| `inject_attrs` | `key='value';key2='value2'` | Semicolon-separated, add/overwrite attributes |
+| `replace_attrs` | `key='value',key2='value2'` | Comma-separated, replace only existing attributes |
+| `inject_children` | `key='value',key2='value2'` | Match parents by attributes, inject all children |
 
 ## Output Structure
 

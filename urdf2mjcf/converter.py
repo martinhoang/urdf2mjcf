@@ -102,7 +102,7 @@ class URDFToMJCFConverter:
                 custom_mujoco_elements,
                 urdf_plugins,
                 ros2c_joint_map,
-            ) = urdf_preprocess.preprocess_urdf(urdf_to_process, args.compiler_options, self.default_mesh_dir, args.separate_dae_meshes, args.append_mesh_type)
+            ) = urdf_preprocess.preprocess_urdf(urdf_to_process, args.compiler_options, self.default_mesh_dir, args.separate_dae_meshes, args.append_mesh_type, args.zero_inertial_rpy)
 
             tracking_progress.append({'name': 'Convert & Copy Meshes'})
             if not args.no_copy_meshes:

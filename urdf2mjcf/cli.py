@@ -273,6 +273,13 @@ def main():
         help="Save the intermediate, pre-processed URDF file for debugging.",
     )
     advanced_group.add_argument(
+        "-nzi",
+        "--no-zero-inertial-rpy",
+        action="store_false",
+        dest="zero_inertial_rpy",
+        help="Do not transform inertial tensors to zero RPY orientation (enabled by default).",
+    )
+    advanced_group.add_argument(
         "-sdm",
         "--separate-dae-meshes",
         action="store_true",

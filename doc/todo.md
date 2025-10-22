@@ -9,10 +9,13 @@ This document tracks the development progress and future plans for the urdf2mjcf
 ### v0.8.0 - Planned (Next Release) 🎯
 - [x] Processing multiple meshes (with their colors) inside a DAE file
 - [x] Auto detect and validate mesh face count before conversion
+- [x] Recursively add children into a parent tag with new special operation, 'inject_children'
+- [x] Automatic inertial tensor transformation to zero RPY orientation
 - [ ] Save JSON file with relative package path if relative paths were given at original CLI / config JSON file
 - [ ] Passing additional arguments alongside JSON config file
 - [ ] Add logging system with different verbosity levels
-- [ ] Re-arrange post-processing procedures for max functionalities and avoid potential bugs
+- [ ] Re-arrange post-processing procedures for max functionalities and avoid potential bugs 
+
 
 ---
 
