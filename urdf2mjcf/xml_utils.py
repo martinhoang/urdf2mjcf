@@ -108,17 +108,54 @@ def find_matching_elements(root, elem):
 	if not has_wildcards:
 		# No wildcards, use simple XPath matching
 		attr_conditions = []
+		# ElementTree's limited XPath does not support 'and' inside a single predicate.
+		# Build multiple bracketed predicates instead: .//tag[@a='1'][@b='2']
+		use_manual_fallback = False
 		for attr_name, attr_value in elem.attrib.items():
-			attr_conditions.append(f"@{attr_name}='{attr_value}'")
+			# Choose quote style that doesn't conflict with attribute value
+			if "'" in attr_value and '"' in attr_value:
+				# Can't represent this value in a single-quoted or double-quoted literal in XPath
+				# Fall back to manual filtering below
+				use_manual_fallback = True
+				break
+			elif "'" in attr_value:
+				attr_conditions.append(f'@{attr_name}="{attr_value}"')
+			else:
+				attr_conditions.append(f"@{attr_name}='{attr_value}'")
 		
-		xpath_query = f".//{tag}[{' and '.join(attr_conditions)}]"
+		if use_manual_fallback:
+			# Manual traversal: find all elements with tag and compare attributes in Python
+			all_candidates = root.findall(f".//{tag}")
+			matching_nodes = []
+			for candidate in all_candidates:
+				matches = True
+				for aname, avalue in elem.attrib.items():
+					if candidate.get(aname) != avalue:
+						matches = False
+						break
+				if matches:
+					matching_nodes.append(candidate)
+			return matching_nodes
 		
+		# Build chained predicate XPath which ElementTree supports
+		xpath_query = f".//{tag}" + "".join([f"[{c}]" for c in attr_conditions])
 		try:
 			matching_nodes = root.findall(xpath_query)
 			return matching_nodes
 		except Exception as e:
 			print_warning(f"Error finding matching elements with XPath '{xpath_query}': {e}")
-			return []
+			# Fallback to manual filtering if XPath failed for some reason
+			all_candidates = root.findall(f".//{tag}")
+			matching_nodes = []
+			for candidate in all_candidates:
+				matches = True
+				for aname, avalue in elem.attrib.items():
+					if candidate.get(aname) != avalue:
+						matches = False
+						break
+				if matches:
+					matching_nodes.append(candidate)
+			return matching_nodes
 	else:
 		# Has wildcards, need to use manual filtering
 		return find_matching_elements_with_wildcards(root, elem)
