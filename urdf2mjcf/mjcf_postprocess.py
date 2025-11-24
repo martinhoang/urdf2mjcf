@@ -339,19 +339,23 @@ def post_process_inject_custom_mujoco_elements(root, elements):
 			return
 		
 		# Standard child element injection (existing behavior)
+		# First, check if we should try to find matching elements
+		# For tags like <include>, each instance should be separate, not merged
+		# Only try to merge if the element has ALL attributes matching
 		matching_nodes = xml_utils.find_matching_elements(root, elem)
 		
-		if matching_nodes:
-			# Inject children and attributes into matching existing elements
-			for target_node in matching_nodes:
+		# Filter to only exact matches (all attributes must match exactly)
+		exact_matches = []
+		for node in matching_nodes:
+			if set(node.attrib.items()) == set(elem.attrib.items()):
+				exact_matches.append(node)
+		
+		if exact_matches:
+			# Inject children into exactly matching existing elements
+			for target_node in exact_matches:
 				attrs_str = ", ".join([f"{k}='{v}'" for k, v in elem.attrib.items()])
 				target_attrs_str = ", ".join([f"{k}='{v}'" for k, v in target_node.attrib.items()])
-				print_info(f"Injecting element <{elem.tag} {attrs_str}> into existing element: <{target_node.tag} {target_attrs_str}>")
-				
-				# Copy attributes from source to target
-				for attr_name, attr_value in elem.attrib.items():
-					target_node.set(attr_name, attr_value)
-					print_debug(f"Copied attribute {attr_name}='{attr_value}' to existing <{target_node.tag}>")
+				print_info(f"Injecting children into exact matching element: <{target_node.tag} {target_attrs_str}>")
 				
 				# Copy children from the injected element to the target
 				for child in elem:
@@ -360,22 +364,20 @@ def post_process_inject_custom_mujoco_elements(root, elements):
 					print_debug(f"Injected <{child_copy.tag}> into existing <{target_node.tag}>.")
 			return
 
-		# No matching element found, create new element at root level
-		target_node = root.find(elem.tag)
-		if target_node is None:
-			target_node = xml_utils.ensure_node_before_worldbody(root, elem.tag)
-			print_debug(f"Created new <{elem.tag}> tag in MJCF.")
+		# No exact match found, create new element instance
+		# This ensures each <include> or similar tag is added as a separate instance
+		elem_copy = copy.deepcopy(elem)
 		
-		# Copy attributes from source element to target
-		for attr_name, attr_value in elem.attrib.items():
-			target_node.set(attr_name, attr_value)
-			print_debug(f"Copied attribute {attr_name}='{attr_value}' to <{elem.tag}>")
+		# Insert before worldbody
+		worldbody = root.find("worldbody")
+		if worldbody is not None:
+			worldbody_index = list(root).index(worldbody)
+			root.insert(worldbody_index, elem_copy)
+		else:
+			root.append(elem_copy)
 		
-		# Copy children from source element to target
-		for child in elem:
-			child_copy = copy.deepcopy(child)
-			target_node.append(child_copy)
-			print_debug(f"Injected <{child_copy.tag}> into <{elem.tag}>.")
+		attrs_str = ", ".join([f"{k}='{v}'" for k, v in elem.attrib.items()])
+		print_debug(f"Added new <{elem.tag} {attrs_str}> instance to MJCF.")
 	
 	# Process all root-level elements
 	for elem in elements:
