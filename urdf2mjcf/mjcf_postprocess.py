@@ -612,7 +612,7 @@ def post_process_set_simulation_options(root, solver=None, integrator=None):
 		print_base(f"-> Set simulation options: {', '.join(options_set)}")
 
 
-def post_process_add_actuators(root, default_ros2_control_instance, mimic_joints=None, add_ros_plugins=False, default_actuator_gains=[500.0, 1.0], ros2c_joint_map=None, force_actuator_tags=True):
+def post_process_add_actuators(root, default_ros2_control_instance, mimic_joints=None, add_ros_plugins=False, default_actuator_gains= {"kp" : 500.0, "kv" : 1.0}, ros2c_joint_map=None, force_actuator_tags=True):
 	"""Add actuators per ros2_control interfaces.
 	- Multiple interfaces on one joint are supported.
 	- If a joint has both 'position' and 'velocity', create both actuators.
@@ -694,10 +694,9 @@ def post_process_add_actuators(root, default_ros2_control_instance, mimic_joints
 				"joint": joint_name,
 			}
 			# Gains: kp for position, kv for velocity
-			if tag == "position":
-				actuator_attrs["kp"] = str(default_actuator_gains[0])
-			elif tag == "velocity":
-				actuator_attrs["kv"] = str(default_actuator_gains[1])
+			# if tag == "position":
+			for key in default_actuator_gains.keys():
+				actuator_attrs[key] = str(default_actuator_gains[key])
 
 			# ctrlrange from joint range
 			if "range" in joint.attrib:
@@ -783,8 +782,9 @@ def post_process_add_mimic_plugins(root, mimic_joints, default_actuator_gains):
 			attr = {
 				"name": candidate,
 				"joint": joint_name,
-				"kp": str(default_actuator_gains[0]),
 			}
+			for key in default_actuator_gains.keys():
+				attr[key] = str(default_actuator_gains[key])
 			# Copy ctrlrange/forcerange from the joint definition if available
 			jnode = root.find(f".//joint[@name='{joint_name}']")
 			if jnode is not None:

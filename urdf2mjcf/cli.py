@@ -4,7 +4,13 @@ import os
 import sys
 
 from .converter import URDFToMJCFConverter
-from _utils import set_log_level, print_confirm, print_warning, print_info
+from _utils import (
+    set_log_level,
+    print_confirm,
+    print_warning,
+    print_info,
+    parse_actuator_gains,
+)
 
 
 class ConfigLoader:
@@ -43,6 +49,9 @@ class ConfigLoader:
             
             # Only set if not provided via CLI (except for the special case of input)
             if dest_key not in cli_provided_args or dest_key == 'input':
+                # Special handling for default_actuator_gains
+                if dest_key == 'default_actuator_gains':
+                    value = parse_actuator_gains(value)
                 setattr(current_args, dest_key, value)
         
         print_confirm(f"Loaded configuration from '{config_file}'")
@@ -131,10 +140,10 @@ def main():
     physics_group.add_argument(
         "-djs",
         "--default-actuator-gains",
-        type=float,
-        nargs=2,
-        default=[500.0, 1.0],
-        help="Set the default joint stiffness (kp) and damping (kv) for all position actuators.",
+        type=parse_actuator_gains,
+        default={"kp": 500.0, "kv": 1.0},
+        metavar="GAINS",
+        help="Set the default actuator gains. Format: 'kp=500.0,kv=1.0' or 'kp=500.0,kv=1.0,dampratio=0.5'. Supported keys: kp (stiffness), kv (damping), dampratio.",
     )
     physics_group.add_argument(
         "-dm",
