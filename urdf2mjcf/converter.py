@@ -69,7 +69,7 @@ class URDFToMJCFConverter:
 
         # XACRO pre-processing
         if input_path.endswith(".xacro"):
-            print_warning(f"Input file '{base_name}' is a xacro file.")
+            print_confirm(f"Input file '{base_name}' is a xacro file.")
             print_base("-> Attempting to convert to URDF using the 'xacro' command...")
 
             if not shutil.which("xacro"):

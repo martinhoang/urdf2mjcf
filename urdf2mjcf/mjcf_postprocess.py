@@ -676,12 +676,14 @@ def post_process_add_actuators(root, default_ros2_control_instance, mimic_joints
 
 		# Determine which actuator types to create from ros2_control interfaces
 		ifaces = set(ros2c_joint_map.get(joint_name, set()))
+		print_base(f"-> Processing joint '{joint_name}' with ros2_control interfaces: {', '.join(ifaces) if ifaces else 'none'}")
 		tags_to_add = []
-		if "position" in ifaces:
+		if any(iface in ["position", "position_pid"] for iface in ifaces):
 			tags_to_add.append("position")
-		if "velocity" in ifaces:
+		if any(iface in ["velocity", "velocity_pid"] for iface in ifaces):
 			tags_to_add.append("velocity")
 		if not tags_to_add:
+			print_base(f"-> No supported ros2_control interfaces found for joint: {joint_name}; skipping actuator creation.")
 			continue
 
 		# Use unique actuator names if multiple interfaces per joint
@@ -696,6 +698,10 @@ def post_process_add_actuators(root, default_ros2_control_instance, mimic_joints
 			# Gains: kp for position, kv for velocity
 			# if tag == "position":
 			for key in default_actuator_gains.keys():
+				if "velocity" in act_name and key == "kp":
+					continue  # There is no kp for velocity actuators
+				if key == "dampratio" and actuator_attrs.get("kv", 0) != 0:
+					actuator_attrs.pop("kv")
 				actuator_attrs[key] = str(default_actuator_gains[key])
 
 			# ctrlrange from joint range
