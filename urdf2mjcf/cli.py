@@ -212,6 +212,13 @@ def main():
         help="Set the simulation integrator (e.g., 'Euler', 'RK4', 'implicitfast').",
     )
     advanced_group.add_argument(
+        "-s",
+        "--solver",
+        type=str,
+        metavar="SOLVER",
+        help="Set the simulation solver (e.g., 'PGS', 'CG', 'Newton').",
+    )
+    advanced_group.add_argument(
         "-ncm",
         "--no-copy-meshes",
         action="store_true",
@@ -300,13 +307,6 @@ def main():
         action="store_false",
         dest="append_mesh_type",
         help="Append '_visual' or '_collision' to mesh filenames for easy distinguishment.",
-    )
-    advanced_group.add_argument(
-        "-s",
-        "--solver",
-        type=str,
-        metavar="SOLVER",
-        help="Set the simulation solver (e.g., 'PGS', 'CG', 'Newton').",
     )
     advanced_group.add_argument(
         "-xa",
