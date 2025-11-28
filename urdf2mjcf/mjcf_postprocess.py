@@ -698,11 +698,12 @@ def post_process_add_actuators(root, default_ros2_control_instance, mimic_joints
 			# Gains: kp for position, kv for velocity
 			# if tag == "position":
 			for key in default_actuator_gains.keys():
-				if "velocity" in act_name and key == "kp":
+				if "velocity" in act_name and key in ["kp", "dampratio"] : 
 					continue  # There is no kp for velocity actuators
 				if key == "dampratio" and actuator_attrs.get("kv", 0) != 0:
 					actuator_attrs.pop("kv")
 				actuator_attrs[key] = str(default_actuator_gains[key])
+				print_base(f"Setting actuator attribute '{key}' to '{default_actuator_gains[key]}' for actuator '{act_name}'")
 
 			# ctrlrange from joint range
 			if "range" in joint.attrib:
