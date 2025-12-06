@@ -24,46 +24,49 @@ class ConfigLoader:
         preserving CLI arguments that were explicitly provided.
         """
         if not config_file or not os.path.exists(config_file):
-            print_warning(f"Config file '{config_file}' not found. Using default arguments and CLI overrides only.")
+            print_warning(
+                f"Config file '{config_file}' not found. Using default arguments and CLI overrides only."
+            )
             return None
 
         # Load config from JSON file
         with open(config_file, "r") as f:
             config_data = json.load(f)
-        
+
         # Get the current arguments that were explicitly set via CLI
         # We'll preserve these and only update the ones not set
         cli_provided_args = set()
-        
+
         # Check which arguments were provided on command line
         for arg in sys.argv[1:]:
-            if arg.startswith('-'):
+            if arg.startswith("-"):
                 # Remove leading dashes and convert to dest format
-                clean_arg = arg.lstrip('-').replace('-', '_')
+                clean_arg = arg.lstrip("-").replace("-", "_")
                 cli_provided_args.add(clean_arg)
-        
+
         # Update namespace with config values, but don't override CLI args
         for key, value in config_data.items():
             # Convert key format (e.g., 'add-floor' -> 'add_floor')
-            dest_key = key.replace('-', '_')
-            
+            dest_key = key.replace("-", "_")
+
             # Only set if not provided via CLI (except for the special case of input)
-            if dest_key not in cli_provided_args or dest_key == 'input':
+            if dest_key not in cli_provided_args or dest_key == "input":
                 # Special handling for default_actuator_gains
-                if dest_key == 'default_actuator_gains':
+                if dest_key == "default_actuator_gains":
                     value = parse_actuator_gains(value)
                 setattr(current_args, dest_key, value)
-        
+
         print_confirm(f"Loaded configuration from '{config_file}'")
-        
+
         return current_args
+
 
 def main():
     parser = argparse.ArgumentParser(
         description="Convert a URDF file to a MuJoCo MJCF (XML) file using the <compiler> tag method.",
         formatter_class=argparse.RawTextHelpFormatter,
     )
-    
+
     # Add an argument for the config file
     parser.add_argument(
         "-cf",
@@ -74,11 +77,11 @@ def main():
     )
 
     parser.add_argument(
-        "input", 
-        type=str, 
-        nargs='?',
+        "input",
+        type=str,
+        nargs="?",
         metavar="PATH",
-        help="Path to the input URDF, xacro, or JSON config file."
+        help="Path to the input URDF, xacro, or JSON config file.",
     )
 
     # Organized argument groups
@@ -273,14 +276,7 @@ def main():
         "-ci",
         "--calculate-inertia",
         action="store_true",
-        help="Calculate and print inertia for meshes (requires mass parameter).",
-    )
-    advanced_group.add_argument(
-        "-cim",
-        "--calculate-inertia-mass",
-        type=float,
-        metavar="MASS",
-        help="Mass (in kg) to use for inertia calculations.",
+        help="Calculate and print inertia for meshes using mass values from URDF links.",
     )
     advanced_group.add_argument(
         "-sp",
@@ -332,37 +328,41 @@ def main():
     )
     # Initial parse to get log level and config file path
     args, _ = parser.parse_known_args()
-    
+
     # Auto-detect JSON config file from input argument
     config_file = args.config_file
     input_file = args.input
-    
-    if args.input and args.input.endswith('.json'):
+
+    if args.input and args.input.endswith(".json"):
         # If input is a JSON file, treat it as config file
         config_file = args.input
         input_file = None  # Will be set from config
         print_info(f"Auto-detected JSON config file: {config_file}")
-    
+
     if config_file:
         config_loader = ConfigLoader(parser)
         loaded_args = config_loader.load_config(config_file, args)
         if loaded_args:
             args = loaded_args
             # If we auto-detected config, get input from the loaded config
-            if input_file is None and hasattr(args, 'input') and args.input:
+            if input_file is None and hasattr(args, "input") and args.input:
                 input_file = args.input
-    
+
     # Set the final input file
     if input_file:
         args.input = input_file
-    
+
     if args.input is None:
-        raise ValueError("Input URDF or xacro file must be specified either as argument or in config file.")
+        raise ValueError(
+            "Input URDF or xacro file must be specified either as argument or in config file."
+        )
     else:
         if (input_ext := args.input.split(".")[-1]) not in ["urdf", "xacro"]:
-            raise ValueError(f"Input file must be a URDF (.urdf) or xacro (.xacro) file, not {input_ext}")
+            raise ValueError(
+                f"Input file must be a URDF (.urdf) or xacro (.xacro) file, not {input_ext}"
+            )
         print_info(f"Input file: {args.input}")
-    
+
     # Update log level again in case it was in the config
     set_log_level(args.log_level, args.traceback)
 

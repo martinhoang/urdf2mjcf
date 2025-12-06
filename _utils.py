@@ -41,7 +41,8 @@ logging.basicConfig(level=logging.DEBUG, format="%(message)s", stream=sys.stdout
 _logger = logging.getLogger("mujoco_converter")
 
 
-def _log(level, message, color=""):
+# --- Public Print Functions ---
+def print_base(message, level=logging.INFO, color=""):
     """Internal logging function."""
     if level >= _log_level:
         if color:
@@ -50,27 +51,19 @@ def _log(level, message, color=""):
             _logger.log(level, message)
 
 
-# --- Public Print Functions ---
-
-
-def print_base(message):
-    """Prints a standard message."""
-    _log(logging.INFO, message)
-
-
 def print_info(message):
     """Prints an informational message in green."""
-    _log(logging.INFO, message, _GREEN)
+    print_base(message, logging.INFO, _GREEN)
 
 
 def print_warning(message):
     """Prints a warning message in yellow."""
-    _log(logging.WARNING, f"[WARNING] {message}", _YELLOW)
+    print_base(f"[WARNING] {message}", logging.WARNING, _YELLOW)
 
 
 def print_debug(message):
     """Prints a debug message in blue."""
-    _log(logging.DEBUG, f"[DEBUG] {message}", _BLUE)
+    print_base(f"[DEBUG] {message}", logging.DEBUG, _BLUE)
 
 
 def print_error(message, exc_info=None):
@@ -83,7 +76,7 @@ def print_error(message, exc_info=None):
                                                 If an Exception object is passed, its traceback is printed.
                                                 Defaults to None.
     """
-    _log(logging.ERROR, f"[ERROR] {message}", _RED)
+    print_base(f"[ERROR] {message}", logging.ERROR, _RED)
 
     # Determine if a traceback should be shown.
     # This can be triggered by the global flag or by passing exc_info.
@@ -104,73 +97,79 @@ def print_error(message, exc_info=None):
 
 def print_confirm(message):
     """Prints a confirmation message in magenta."""
-    _log(logging.INFO, message, _MAGENTA)
+    print_base(message, logging.INFO, _MAGENTA)
 
 
 def parse_actuator_gains(value):
     """
     Parse actuator gains from string format to dictionary.
-    
+
     Supported formats:
     - "kp=500.0,kv=1.0" (comma-separated key=value pairs)
     - "kp=500.0 kv=1.0" (space-separated key=value pairs)
     - "kp=500.0,kv=1.0,dampratio=0.5" (with dampratio)
     - Dictionary input (passes through)
     - List input [kp, kv] (legacy format)
-    
+
     Args:
         value: String, dict, or list representing actuator gains
-    
+
     Returns:
         dict: Dictionary with parsed key-value pairs (values as floats)
-        
+
     Raises:
         ValueError: If format is invalid or unknown keys are used
     """
     if isinstance(value, dict):
         return value
-    
+
     if isinstance(value, list):
         # Legacy format: [kp, kv]
         if len(value) == 2:
             return {"kp": float(value[0]), "kv": float(value[1])}
         else:
-            raise ValueError(f"Legacy list format must have exactly 2 values [kp, kv], got {len(value)}")
-    
+            raise ValueError(
+                f"Legacy list format must have exactly 2 values [kp, kv], got {len(value)}"
+            )
+
     result = {}
     # Try comma-separated first, then space-separated
-    separators = [',', ' ']
+    separators = [",", " "]
     pairs = []
-    
+
     for sep in separators:
         if sep in value:
             pairs = value.split(sep)
             break
-    
+
     if not pairs:
         pairs = [value]
-    
+
     for pair in pairs:
         pair = pair.strip()
         if not pair:
             continue
-        
-        if '=' not in pair:
-            raise ValueError(f"Invalid format: '{pair}'. Expected format: key=value (e.g., 'kp=500.0,kv=1.0')")
-        
-        key, val = pair.split('=', 1)
+
+        if "=" not in pair:
+            raise ValueError(
+                f"Invalid format: '{pair}'. Expected format: key=value (e.g., 'kp=500.0,kv=1.0')"
+            )
+
+        key, val = pair.split("=", 1)
         key = key.strip()
         val = val.strip()
-        
-        if key not in ['kp', 'kv', 'dampratio']:
-            raise ValueError(f"Unknown actuator gain key: '{key}'. Allowed keys: kp, kv, dampratio")
-        
+
+        if key not in ["kp", "kv", "dampratio"]:
+            raise ValueError(
+                f"Unknown actuator gain key: '{key}'. Allowed keys: kp, kv, dampratio"
+            )
+
         try:
             result[key] = float(val)
         except ValueError:
             raise ValueError(f"Invalid value for '{key}': '{val}'. Must be a number.")
-    
+
     if not result:
         raise ValueError(f"No valid key=value pairs found in: '{value}'")
-    
+
     return result
