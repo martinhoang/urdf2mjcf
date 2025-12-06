@@ -1,463 +1,283 @@
 # URDF2MJCF Converter
 
-A powerful command-line tool for converting URDF (Unified Robot Description Format) files to MuJoCo MJCF (XML) format with advanced features for robotics simulation.
+A powerful CLI tool for converting URDF/Xacro files to MuJoCo MJCF format with advanced mesh processing, physics customization, and ROS2 integration.
 
 ## Features
 
-- **Multiple Input Formats**: Supports URDF, Xacro, and JSON configuration files
-- **ROS2 Integration**: Built-in support for ROS2 control plugins and MuJoCo-ROS utilities at my fork of AIST [MujocoRosUtils](https://github.com/martinhoang/MujocoRosUtils.git)
-- **Physics Customization**: Configure joint properties, actuators, and simulation parameters
-- **Mesh Processing**: Automatic mesh copying and optional mesh reduction
-- **Flexible Configuration**: CLI arguments, JSON config files, or hybrid approaches
-- **Auto-Detection**: Automatically detects JSON config files when passed as input
+- **Smart Input**: Supports URDF, Xacro files, and JSON config with auto-detection
+- **Automatic Inertia Calculation**: Calculate and inject inertia tensors from mesh geometry and link masses
+- **Inertial Tensor Transformation**: Automatically transforms inertial frames to zero RPY (MuJoCo 3.2+ compatibility)
+- **Mesh Processing**: Automatic validation, simplification, and DAE multi-mesh extraction with material preservation
+- **ROS2 Integration**: Built-in support for ROS2 control and [MujocoRosUtils](https://github.com/martinhoang/MujocoRosUtils.git) plugins
+- **Physics Tuning**: Configure actuators, damping, gravity compensation, and solver settings
+- **Custom MJCF Injection**: Inject custom MuJoCo elements directly from URDF via `<mujoco>` tags
 
 ## Installation
 
-### As a UV Tool (System-wide)
-
 ```bash
-# Navigate to the urdf2mjcf directory
-cd /path/to/umanoid_description_mujoco/urdf2mjcf
-
-# Install as a system-wide tool
-uv tool install .
-
-# Or install in development mode for local changes
+# Install as UV tool (recommended)
+cd urdf2mjcf
 uv tool install -e .
-```
 
-### Verify Installation
-
-```bash
+# Verify installation
 urdf2mjcf --help
 ```
 
-## Usage
-
-### Basic Usage
+## Quick Start
 
 ```bash
-# Convert a URDF file
-urdf2mjcf robot.urdf
-
-# Convert a Xacro file
+# Basic conversion
 urdf2mjcf robot.urdf.xacro
 
-# Specify output directory
-urdf2mjcf robot.urdf -o /path/to/output
+# With floating base and floor
+urdf2mjcf robot.urdf.xacro -fb -af -haf 0.3
 
-# Add floating base and floor
-urdf2mjcf robot.urdf -fb -af
-```
-
-### Configuration File Usage
-
-#### Method 1: Explicit Config Flag
-```bash
-urdf2mjcf robot.urdf -cf config.json
-```
-
-#### Method 2: Auto-Detection (New!)
-```bash
-# Automatically detects and loads JSON config
+# Using JSON config (auto-detected)
 urdf2mjcf config.json
+
+# Advanced: Full ROS2 setup with custom gains
+urdf2mjcf robot.urdf.xacro -fb -af -arp -arc -djs 800.0 5.0 -ci
 ```
 
-### JSON Configuration Format
+## Key Arguments
 
-Create a `config.json` file with your desired settings:
+### Core Options
+- `-o, --output PATH` - Output directory (default: `<input_name>/`)
+- `-fb, --floating-base` - Add free joint for floating base
+- `-af, --add-floor` - Add ground plane
+- `-haf, --height-above-floor HEIGHT` - Set robot height above floor (default: 0.3)
 
+### Physics & Dynamics
+- `-djs, --default-actuator-gains Kp Kv` - Set joint stiffness and damping
+- `-dm, --damping-multiplier FACTOR` - Multiply all joint damping values
+- `-gc, --gravity-compensation` - Enable gravity compensation
+- `-a, --armature VALUE` - Set global armature for joints
+- `-s, --solver SOLVER` - Simulation solver (PGS, CG, Newton)
+- `-int, --integrator TYPE` - Integrator (Euler, RK4, implicitfast)
+
+### ROS2 Integration
+- `-arp, --add-ros-plugins` - Add MujocoRosUtils actuator plugins
+- `-arc, --add-ros2-control` - Add main Ros2Control plugin
+- `-rcc, --ros2-control-config PATH` - Path to ros2_control YAML config
+- `-ncp, --no-clock-publisher` - Disable clock publisher
+- `-nmj, --no-mimic-joints` - Disable mimic joint plugins
+
+### Mesh Processing
+- `-ci, --calculate-inertia` - **NEW!** Calculate inertia from meshes using URDF link masses
+- `-sr, --simplify-reduction RATIO` - Simplify meshes (0.0-1.0, values < 1.0 enable)
+- `-stf, --simplify-target-faces COUNT` - Target face count for simplification
+- `-sdm, --separate-dae-meshes` - Extract separate STL per mesh/material from DAE
+- `-nmt, --no-append-mesh-type` - Don't append `_visual`/`_collision` to filenames
+- `-nvmf, --no-validate-mesh-faces` - Disable auto mesh face validation
+- `-mfl, --max-faces-limit COUNT` - Max faces per mesh (default: 200000)
+- `-gcm, --generate-collision-meshes` - Generate convex hull collision meshes
+
+### Advanced
+- `-nzi, --no-zero-inertial-rpy` - Keep original inertial RPY (disable auto-transform)
+- `-xa, --xacro-args KEY:=VALUE ...` - Pass args to xacro processor
+- `-co, --compiler-options KEY=VALUE ...` - Override compiler attributes
+- `-sp, --save-preprocessed` - Save intermediate URDF for debugging
+- `-ll, --log-level LEVEL` - Logging level (DEBUG, INFO, WARNING, ERROR)
+- `-tb, --traceback` - Show full error traceback
+
+## JSON Configuration
+
+Create `config.json`:
 ```json
 {
-  "input": "path/to/robot.urdf.xacro",
-  "output": "output_directory",
+  "input": "robot.urdf.xacro",
+  "output": "mujoco_output",
   "floating_base": true,
   "add_floor": true,
-  "height_above_floor": 0.5,
+  "height_above_floor": 0.3,
   "add_ros_plugins": true,
   "add_ros2_control": true,
-  "default_actuator_gains": [1000.0, 10.0],
-  "armature": 0.01,
-  "damping_multiplier": 2.0,
+  "calculate_inertia": true,
+  "default_actuator_gains": [800.0, 5.0],
+  "damping_multiplier": 1.5,
   "gravity_compensation": true,
-  "xacro_args": ["param1:=value1", "param2:=value2"],
-  "mesh_reduction": 0.8,
+  "separate_dae_meshes": true,
+  "xacro_args": ["hardware_type:=sim_mujoco", "use_sensors:=true"],
   "log_level": "INFO"
 }
 ```
 
-## Command Line Options
+Then run: `urdf2mjcf config.json` (auto-detected) or `urdf2mjcf robot.urdf -cf config.json`
 
-### Core Conversion Options
-- `-af, --add-floor`: Add a ground plane to the simulation world
-- `-fb, --floating-base`: Add a free joint to the root link to make the base float  
-- `-haf, --height-above-floor`: Set the height of the robot w.r.t the added floor
-- `-na, --no-actuators`: Do not add position and plugin actuators for non-fixed joints
-- `-o, --output`: The directory where the output MJCF file and assets will be saved
+**Precedence**: CLI arguments > JSON config > defaults
 
-### Physics & Model Properties
-- `-a, --armature`: Set a global armature value for all joints
-- `-djs, --default-actuator-gains`: Set the default joint stiffness (kp) and damping (kv)
-- `-dm, --damping-multiplier`: Multiply all joint damping values by this factor
-- `-gc, --gravity-compensation`: Enable gravity compensation for all bodies
+## New Features
 
-### ROS Integration
-- `-arc, --add-ros2-control`: Add the main MujocoRosUtils::Ros2Control plugin
-- `-arp, --add-ros-plugins`: Add MujocoRosUtils plugins for actuator commands
-- `-ncp, --no-clock-publisher`: Do not add the ClockPublisher plugin
-- `-nmj, --no-mimic-joints`: Do not add MimicJoint plugins
-- `-rcc, --ros2-control-config`: Path to the ros2_control configuration YAML file
+### 🎯 Automatic Inertia Calculation & Injection
 
-### Advanced & Debugging Options
-- `-co, --compiler-options`: Override or add compiler attributes
-- `-int, --integrator`: Set the simulation integrator
-- `-ncm, --no-copy-meshes`: Do not copy referenced mesh files to output directory
-- `-mr, --mesh-reduction`: Set the mesh reduction ratio (0.0-1.0)
-- `-nvmf, --no-validate-mesh-faces`: Disable automatic mesh face validation (enabled by default)
-- `-mfl, --max-faces-limit`: Maximum faces per mesh file (MuJoCo limit: 200000)
-- `-sr, --simplify-reduction`: Simplify meshes using pymeshlab (reduction ratio 0.0-1.0)
-- `-stf, --simplify-target-faces`: Simplify meshes to target number of faces
-- `-gcm, --generate-collision-meshes`: Generate convex hull collision meshes
-- `-ci, --calculate-inertia`: Calculate and print inertia for meshes
-- `-cim, --calculate-inertia-mass`: Mass (in kg) to use for inertia calculations
-- `-sp, --save-preprocessed`: Save the intermediate, pre-processed URDF file
-- `-nzi, --no-zero-inertial-rpy`: Disable automatic inertial tensor transformation to zero RPY (enabled by default)
-- `-sdm, --separate-dae-meshes`: Extract each mesh/material from DAE as separate STL files with colors (default: combine all into single STL)
-- `-amt, --append-mesh-type`: Append '_visual' or '_collision' to mesh filenames for easy distinguishment
-- `-s, --solver`: Set the simulation solver
-- `-xa, --xacro-args`: Arguments to pass to the xacro processor
-- `-ll, --log-level`: Set the logging level (DEBUG, INFO, WARNING, ERROR)
-- `-tb, --traceback`: Show full traceback on error
-
-## Examples
-
-### Example 1: Basic Robot Conversion
-```bash
-urdf2mjcf my_robot.urdf.xacro -o my_robot_mujoco -fb -af
-```
-
-### Example 2: Advanced Configuration
-```bash
-urdf2mjcf robot.urdf \
-  -fb \
-  -af \
-  -haf 0.3 \
-  -arp \
-  -arc \
-  -djs 800.0 5.0 \
-  -dm 1.5 \
-  -gc \
-  -sdm \
-  -amt \
-  -xa "use_gripper:=true" "hardware_type:=sim_mujoco" \
-  -ll DEBUG
-```
-
-### Example 3: DAE Mesh Processing
-```bash
-# Extract separate meshes from DAE files with material preservation
-urdf2mjcf robot.urdf.xacro -o output/ --separate-dae-meshes
-
-# Append mesh type to filenames for easy identification
-urdf2mjcf robot.urdf.xacro -o output/ --append-mesh-type
-# Creates: base_visual.stl, wrist_collision.stl, etc.
-
-# Combined: separate DAE meshes + append type tags
-urdf2mjcf robot.urdf.xacro -o output/ --separate-dae-meshes --append-mesh-type
-# Creates: base_JointGrey_visual.stl, base_Black_visual.stl, wrist2_collision.stl, etc.
-```
-
-### Example 4: Using JSON Configuration
-Create `robot_config.json`:
-```json
-{
-  "input": "my_robot.urdf.xacro",
-  "output": "mujoco_output",
-  "floating_base": true,
-  "add_floor": true,
-  "height_above_floor": 0.2,
-  "add_ros_plugins": true,
-  "add_ros2_control": true,
-  "default_actuator_gains": [500.0, 1.0],
-  "gravity_compensation": true,
-  "xacro_args": ["hardware_type:=sim_mujoco", "use_sensors:=true"]
-}
-```
-
-Then run:
-```bash
-urdf2mjcf robot_config.json
-```
-
-### Example 5: Override Config with CLI Arguments
-```bash
-# Load config but override specific settings
-urdf2mjcf robot_config.json -ll DEBUG -o different_output
-```
-
-### Example 6: Mesh Face Validation (Auto-Fix)
-```bash
-# Automatic validation and fixing (enabled by default)
-urdf2mjcf robot.urdf
-
-# Disable validation if you don't want auto-fixing
-urdf2mjcf robot.urdf -nvmf
-
-# Custom face limit (if needed)
-urdf2mjcf robot.urdf -mfl 150000
-```
-
-## Mesh Face Count Validation
-
-MuJoCo has a hard limit of **200,000 faces per mesh file**. This converter now **automatically validates** all meshes before importing into MuJoCo and **auto-fixes** any oversized meshes.
-
-### How It Works
-
-1. **Automatic Detection**: Before MuJoCo import, all mesh files are scanned
-2. **Face Counting**: Counts faces in STL, OBJ, and DAE files
-3. **Auto-Fix**: Meshes exceeding the limit are automatically simplified to 50% of the limit (100,000 faces)
-4. **Backup**: Original files are backed up as `.bak` before modification
-5. **Verification**: Confirms successful reduction after simplification
-
-### Features
-
-- ✅ **Enabled by default** - no manual intervention needed
-- ✅ **Supports STL (binary/ASCII), OBJ, DAE** formats
-- ✅ **Creates automatic backups** before modifying files
-- ✅ **Detailed logging** shows before/after face counts
-- ✅ **Smart target reduction** to 50% of limit for safety margin
-
-### Manual Control
+Calculate physically accurate inertia tensors from mesh geometry and automatically inject them into the URDF:
 
 ```bash
-# Disable validation (not recommended)
-urdf2mjcf robot.urdf --no-validate-mesh-faces
-
-# Custom face limit
-urdf2mjcf robot.urdf --max-faces-limit 150000
+urdf2mjcf robot.urdf.xacro -ci
 ```
 
-### Example Output
+**How it works:**
+1. Extracts link masses from URDF `<inertial><mass>` elements
+2. Parses mesh scale from `<mesh scale="...">` attribute
+3. Calculates inertia tensor using mesh geometry (via trimesh)
+4. Injects calculated values back into preprocessed URDF before MuJoCo import
+
+**Requirements**: Link must have `<mass>` defined in URDF and at least one mesh (visual or collision)
+
+**Example output:**
+```
+Calculating inertia for visual mesh of link 'wrist_3_link': wrist_3_visual.stl (scale: 0.001)
+-> Calculated inertia for link 'wrist_3_link' (mass: 0.35 kg):
+<inertial>
+  <origin xyz="0.0012 -0.0003 0.0245" rpy="0 0 0"/>
+  <mass value="0.35"/>
+  <inertia ixx="0.000123" ixy="0.000002" ixz="0.000001"
+           iyy="0.000145" iyz="0.000003" izz="0.000089"/>
+</inertial>
+```
+
+### 🔄 Inertial Tensor Transformation (Auto-enabled)
+
+Automatically transforms inertial properties to zero RPY orientation using proper rotation matrix transformation:
+
+**Problem**: MuJoCo 3.2+ doesn't support non-zero RPY in inertial frames  
+**Solution**: Transform inertia tensor: **I'** = **R** · **I** · **R**^T
+
+```xml
+<!-- Before (URDF) -->
+<inertial>
+  <origin xyz="0 0 0.02" rpy="1.5708 0 0"/>  <!-- 90° rotation -->
+  <inertia ixx="0.001" iyy="0.002" izz="0.003" .../>
+</inertial>
+
+<!-- After (MJCF) -->
+<inertial pos="0 0 0.02" mass="..." 
+          diaginertia="0.002 0.001 0.003"/>  <!-- Transformed -->
+```
+
+Disable with: `urdf2mjcf robot.urdf -nzi`
+
+### 🎨 DAE Multi-Mesh Extraction with Materials
+
+Extract separate STL files per mesh/material from DAE files, preserving colors:
+
+```bash
+urdf2mjcf robot.urdf.xacro -sdm
+```
+
+**Output**: `base_Grey.stl`, `base_Black.stl`, `arm_Metal.stl` (with RGBA colors in URDF)
+
+Combine with mesh type suffixes: `urdf2mjcf robot.urdf -sdm -nmt` → `base_Grey_visual.stl`
+
+### ✅ Automatic Mesh Validation & Fixing
+
+MuJoCo has a 200,000 face limit. This tool auto-detects and fixes oversized meshes:
 
 ```
 Validating mesh files before MuJoCo import...
 Found 2 mesh(es) exceeding MuJoCo's 200,000 face limit:
-  ✗ BASE_visual.stl: 450,320 faces → needs reduction to ~100,000
-  ✗ ARM_visual.stl: 220,150 faces → needs reduction to ~100,000
+  ✗ base.stl: 450,320 faces → reducing to ~100,000
 Attempting to automatically fix oversized meshes...
-Created backup: BASE_visual.stl.bak
-Simplifying BASE_visual.stl: 450,320 → 100,000 faces
-✓ Successfully reduced BASE_visual.stl to 99,847 faces
-✓ Successfully simplified 2 mesh(es)
+✓ Successfully reduced base.stl to 99,847 faces
 ```
 
-## Inertial Tensor Transformation
+**Features**: Automatic backups (`.bak`), smart target reduction (50% of limit), supports STL/OBJ/DAE
 
-The converter **automatically transforms inertial properties** to remove non-zero RPY orientations. This ensures all inertial frames have `rpy="0 0 0"` by properly rotating the inertia tensor.
+Disable with: `urdf2mjcf robot.urdf -nvmf`
 
-### Why This Matters
-The current version of MuJoCo (3.3.4) does not support non-zero RPY values in inertial frames, which can lead to incorrect physics simulation if the inertia tensor is not aligned with the principal axes.
-Many URDF files have rotated inertial frames like:
+### 🔧 Custom MJCF Element Injection
+
+Inject custom MuJoCo elements directly from your URDF using `<mujoco>` tags:
+
 ```xml
-<inertial>
-  <origin xyz="0 0 0.0215" rpy="1.5708 0 0"/>  <!-- pi/2 rotation -->
-  <mass value="0.010"/>
-  <inertia ixx="0.001" ixy="0.0" ixz="0.0" 
-           iyy="0.002" iyz="0.0" izz="0.003"/>
-</inertial>
+<robot>
+  <mujoco>
+    <compiler meshdir="assets/" autolimits="true"/>
+    <worldbody>
+      <!-- Inject site into gripper body -->
+      <body inject_children="name='gripper_link'">
+        <site name="grasp_site" pos="0 0 0.05" type="sphere" size="0.01"/>
+      </body>
+      
+      <!-- Add visual attributes to all geoms -->
+      <geom inject_attrs="class='visual';group='2'"/>
+    </worldbody>
+  </mujoco>
+</robot>
 ```
 
-The converter transforms this to:
-```xml
-<inertial>
-  <origin xyz="0 0 0.0215" rpy="0 0 0"/>  <!-- Zero rotation -->
-  <mass value="0.010"/>
-  <inertia ixx="0.002" ixy="0.0" ixz="0.0"  <!-- Transformed values -->
-           iyy="0.001" iyz="0.0" izz="0.003"/>
-</inertial>
-```
-
-### Features
-
-- ✅ **Enabled by default** - automatic transformation
-- ✅ **Mathematically correct** - uses proper rotation matrix transformation: I' = R·I·R^T
-- ✅ **Supports expressions** - handles `${pi/2}`, `${pi}`, math expressions
-- ✅ **Preserves physics** - identical dynamics in MuJoCo
-
-### Manual Control
-
-```bash
-# Disable transformation (keep original RPY values)
-urdf2mjcf robot.urdf --no-zero-inertial-rpy
-```
-
-### How It Works
-
-1. Parses RPY values (including expressions like `${pi/2}`)
-2. Extracts the 3×3 inertia tensor from ixx, ixy, ixz, iyy, iyz, izz
-3. Creates rotation matrix R from roll-pitch-yaw
-4. Transforms inertia: **I'** = **R** · **I** · **R**^T
-5. Sets RPY to `0 0 0` and updates inertia values
-
-## Custom MJCF Element Injection
-
-The converter supports powerful **custom syntax operations** for injecting and modifying MJCF elements directly from your URDF file using special `<mujoco>` tags.
-
-### Supported Operations
-
-#### 1. `inject_attr` / `inject_attrs`
-Add or overwrite attributes on matching elements:
-```xml
-<mujoco>
-  <worldbody>
-    <geom inject_attr="class='visual' group='2'" name="my_geom"/>
-  </worldbody>
-</mujoco>
-```
-
-#### 2. `replace_attrs`
-Replace existing attributes (only if they exist):
-```xml
-<mujoco>
-  <worldbody>
-    <geom replace_attrs="rgba='1 0 0 1'" name="my_geom"/>
-  </worldbody>
-</mujoco>
-```
-
-#### 3. `inject_children` (NEW!)
-Inject child elements into all matching parent elements:
-```xml
-<mujoco>
-  <worldbody>
-    <body inject_children="name='gripper/l_gripper_bend'">
-      <site name="gripper_site" pos="0 0 0" rgba="0.6 0.6 0.6 1" size="0.002" type="sphere"/>
-    </body>
-  </worldbody>
-</mujoco>
-```
-
-This finds all `<body>` elements with `name="gripper/l_gripper_bend"` and injects the `<site>` element into each of them.
-
-### How It Works
-
-1. **Parser** extracts `<mujoco>` tags from your URDF
-2. **Matcher** finds target elements in the generated MJCF using attributes
-3. **Injector** applies operations (add attributes, replace values, inject children)
-
-### Examples
-
-#### Example 1: Add Visual Properties
-```xml
-<mujoco>
-  <asset>
-    <material inject_attrs="specular='0.5';shininess='0.25'" name="metal"/>
-  </asset>
-</mujoco>
-```
-
-#### Example 2: Inject Sites into Multiple Bodies
-```xml
-<mujoco>
-  <worldbody>
-    <!-- Inject site into left gripper -->
-    <body inject_children="name='left_gripper'">
-      <site name="left_tip" pos="0 0 0.05" type="sphere" size="0.01"/>
-    </body>
-    
-    <!-- Inject site into right gripper -->
-    <body inject_children="name='right_gripper'">
-      <site name="right_tip" pos="0 0 0.05" type="sphere" size="0.01"/>
-    </body>
-  </worldbody>
-</mujoco>
-```
-
-#### Example 3: Conditional Replacement
-```xml
-<mujoco>
-  <worldbody>
-    <geom replace_attrs="class='collision',rgba='0.5 0.5 0.5 0.3':class='visual'"/>
-  </worldbody>
-</mujoco>
-```
-
-### Syntax Reference
-
-| Operation | Syntax | Purpose |
-|-----------|--------|---------|
-| `inject_attr` | `key='value' key2='value2'` | Space-separated, add/overwrite attributes |
-| `inject_attrs` | `key='value';key2='value2'` | Semicolon-separated, add/overwrite attributes |
-| `replace_attrs` | `key='value',key2='value2'` | Comma-separated, replace only existing attributes |
-| `inject_children` | `key='value',key2='value2'` | Match parents by attributes, inject all children |
+**Supported operations:**
+- `inject_attr` / `inject_attrs` - Add/overwrite attributes
+- `replace_attrs` - Replace only existing attributes  
+- `inject_children` - Inject child elements into matching parents
 
 ## Output Structure
 
-The converter creates the following output structure:
 ```
 output_directory/
-├── robot_name.xml          # Main MJCF file
-├── assets/                 # Mesh files and textures
-│   ├── mesh1.stl
-│   ├── mesh2.stl
+├── robot.xml               # Main MJCF file
+├── assets/                 # Meshes and textures
+│   ├── base_visual.stl
+│   ├── arm_collision.stl
 │   └── ...
-├── config.json            # Configuration used for conversion
-└── robot_preprocessed.urdf # (Optional) Preprocessed URDF file
+└── config.json            # Configuration used
 ```
 
-## Configuration Precedence
+## Common Workflows
 
-When using both JSON config files and CLI arguments:
+### Standard ROS2 Robot
+```bash
+urdf2mjcf robot.urdf.xacro \
+  -fb -af -haf 0.3 \
+  -arp -arc \
+  -djs 1000.0 10.0 \
+  -ci \
+  -xa "hardware_type:=sim_mujoco"
+```
 
-1. **Default values** (lowest priority)
-2. **JSON configuration file** values
-3. **CLI arguments** (highest priority)
+### High-Fidelity Simulation
+```bash
+urdf2mjcf robot.urdf.xacro \
+  -fb -af \
+  -gc \
+  -dm 2.0 \
+  -s Newton \
+  -int RK4 \
+  -ci \
+  -sdm
+```
 
-CLI arguments will always override JSON configuration values.
+### Debugging & Inspection
+```bash
+urdf2mjcf robot.urdf.xacro \
+  -sp \
+  -ll DEBUG \
+  -tb \
+  -o debug_output
+```
 
 ## Troubleshooting
 
-### Common Issues
+**Inertia calculation fails**: Ensure links have `<mass>` values in URDF and meshes have proper `scale` attribute  
+**Mesh errors**: Check mesh files exist and are accessible. Use `-ll DEBUG` for details  
+**Xacro errors**: Verify xacro arguments with `-xa` flag match your xacro file parameters  
+**MuJoCo import fails**: Enable mesh validation with default settings (auto-enabled) or check face counts
 
-1. **File not found errors**: Ensure all mesh files referenced in the URDF are accessible
-2. **Xacro processing errors**: Check xacro arguments and file syntax
-3. **Missing dependencies**: Install required packages (mujoco, ament-index-python)
-
-### Debug Mode
-```bash
-urdf2mjcf robot.urdf -ll DEBUG -tb
-```
-
-### Save Preprocessed Files
-```bash
-urdf2mjcf robot.urdf -sp
-```
+**Debug mode**: `urdf2mjcf robot.urdf -ll DEBUG -tb -sp`
 
 ## Dependencies
 
 - Python ≥ 3.8
-- MuJoCo
-- ament-index-python (for ROS2 integration)
-- Standard libraries: argparse, json, os, sys
+- MuJoCo ≥ 3.0
+- trimesh (for inertia calculation): `pip install trimesh[easy]`
+- pymeshlab (for mesh simplification): `pip install pymeshlab`
+- open3d (for collision generation): `pip install open3d`
+- ament-index-python (for ROS2): `pip install ament-index-python`
 
-## Development
-
-### Local Development Installation
-```bash
-cd urdf2mjcf/
-uv tool install -e .
-```
-
-### Running Tests
-[TODO]
-
-## TODO bug fixes and new features
-Refer to [TODO](/doc/todo.md)
- 
 ## License
 
-See the main package [LICENSE](./LICENSE) file for details.
+[LICENSE](./LICENSE)
 
 ## Contributing
 
-Please follow the project's contribution guidelines and ensure all changes are tested before submission.
+See [TODO](doc/todo.md) for planned features and known issues.

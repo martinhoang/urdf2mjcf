@@ -1,30 +1,43 @@
 {
-    "add_floor": false,
+    "input": "${env:HOME}/umanoid_ws/src/ara/ara_description/urdf/ara.urdf.xacro",
+    "add_floor": true,
     "floating_base": false,
+    "height_above_floor": 0.0,
     "no_actuators": false,
-    "output": "$(find cobot_description)/xml",
+    "force_actuator_tags": true,
+    "output": "${env:HOME}/umanoid_ws/src/ara/ara_description/xml",
     "armature": null,
-    "default_actuator_gains": [
-        500.0,
-        1.0
-    ],
-    "damping_multiplier": 1000.0,
+    "default_actuator_gains": {
+        "kp": 200.0,
+        "kv": 10.0
+    },
+    "damping_multiplier": 1.0,
     "gravity_compensation": false,
     "add_ros2_control": false,
     "add_ros_plugins": false,
     "add_clock_publisher": true,
-    "add_mimic_joints": true,
+    "add_mimic_joints": false,
     "ros2_control_config": null,
     "compiler_options": null,
     "integrator": null,
-    "no_copy_meshes": false,
-    "mesh_reduction": 0.0,
-    "save_preprocessed": false,
     "solver": null,
+    "no_copy_meshes": false,
+    "mesh_reduction": 0.9,
+    "validate_mesh_faces": true,
+    "max_faces_limit": 200000,
+    "simplify_reduction": 1.0,
+    "simplify_target_faces": null,
+    "generate_collision_meshes": false,
+    "calculate_inertia": false,
+    "save_preprocessed": true,
+    "zero_inertial_rpy": true,
+    "separate_dae_meshes": false,
+    "append_mesh_type": true,
     "xacro_args": [
         "hangup:=true",
         "hardware_type:=sim_mujoco"
     ],
     "log_level": "INFO",
-    "traceback": false
+    "traceback": false,
+    "calculate_inertia_mass": null
 }
