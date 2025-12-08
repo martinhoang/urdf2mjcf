@@ -7,17 +7,32 @@ import xml.etree.ElementTree as ET
 import copy
 import mujoco
 
+from rich.progress import (
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    BarColumn,
+    TaskProgressColumn,
+)
+from rich.live import Live
+from rich.console import Console
+
 from . import urdf_preprocess, mesh_ops, mjcf_postprocess
 from _utils import (
-    print_base,
+    print_debug,
     print_info,
     print_warning,
     print_error,
     print_confirm,
+    set_rich_console,
+    clear_rich_console,
 )
 
 _DEFAULT_ROS2_CONTROL_INSTANCE = "ros2_control"
 _DEFAULT_MESH_DIR = "assets/"
+
+# Global console for rich output
+console = Console()
 
 
 class URDFToMJCFConverter:
@@ -34,77 +49,124 @@ class URDFToMJCFConverter:
         """Main conversion pipeline."""
         args = copy.deepcopy(self.args)
 
-        tracking_progress = []
-
-        # Resolve input and output paths
-        input_path = urdf_preprocess.resolve_path(args.input)
-        if not input_path or not os.path.exists(input_path):
-            print_error(
-                f"Input file not found at '{args.input}' (resolved to '{input_path}')"
-            )
-            return
-        else:
-            print_info(f"Input file: {input_path}")
-
-        if args.output:
-            output_dir = urdf_preprocess.resolve_path(args.output)
-            print_info(f"Using specified output directory: '{output_dir}'")
-        else:
-            print_warning("No output directory specified. Using input directory.")
-            output_dir = os.path.dirname(input_path)
-
-        base_name = os.path.basename(input_path)
-        file_name_without_ext = os.path.splitext(os.path.splitext(base_name)[0])[0]
-
-        output_dir = os.path.join(output_dir, file_name_without_ext)
-        os.makedirs(output_dir, exist_ok=True)
-        output_path = os.path.join(output_dir, f"{file_name_without_ext}.xml")
-
-        # temp_urdf_path: raw xacro-expanded (or original) URDF
-        temp_urdf_path = os.path.join(output_dir, f"{file_name_without_ext}.temp.urdf")
-        # preprocessed_urdf_path: URDF after our preprocess_urdf() mutations
-        preprocessed_urdf_path = os.path.join(
-            output_dir, f"{file_name_without_ext}.preprocessed.urdf"
+        # Initialize progress bar with Live display
+        progress = Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            console=console,
         )
 
-        print_base(f"Output directory set to: '{output_dir}'")
-        print_base(f"Output file will be saved to: '{output_path}'")
+        # Create single task with 8 steps
+        task = progress.add_task("[cyan]Starting conversion...", total=8)
 
-        urdf_to_process = input_path
+        # Use Live display to keep progress bar at bottom
+        live = Live(progress, console=console, refresh_per_second=10)
 
-        # XACRO pre-processing
-        if input_path.endswith(".xacro"):
-            print_confirm(f"Input file '{base_name}' is a xacro file.")
-            print_base("-> Attempting to convert to URDF using the 'xacro' command...")
+        tracking_progress = []
 
-            if not shutil.which("xacro"):
-                print_error(
-                    "The 'xacro' command is not in your PATH. Please install ROS 2 or the 'xacro' package."
-                )
-                return
-
-            try:
-                xacro_command = ["xacro", input_path]
-                if args.xacro_args:
-                    print_base(
-                        f"-> Passing arguments to xacro: {' '.join(args.xacro_args)}"
-                    )
-                    xacro_command.extend(args.xacro_args)
-                xacro_command.extend(["-o", temp_urdf_path])
-
-                subprocess.run(xacro_command, check=True)
-                urdf_to_process = temp_urdf_path
-                print_info(
-                    f"-> Successfully converted xacro to temporary URDF: {urdf_to_process}"
-                )
-            except (subprocess.CalledProcessError, FileNotFoundError) as e:
-                print_error(f"Failed to run xacro processor.\n{e}")
-                return
-
-        root = None
-        custom_mujoco_elements = []
-        urdf_plugins = []
+        # Set console for print functions to use rich console
+        set_rich_console(console)
+        live.start()
         try:
+            # Step 1: Resolve input and output paths
+            print_info("\n" + "=" * 100)
+            print_info("STEP 1: RESOLVING PATHS")
+            print_info("=" * 100)
+            progress.update(task, description="[cyan]Resolving paths...")
+            input_path = urdf_preprocess.resolve_path(args.input)
+            if not input_path or not os.path.exists(input_path):
+                progress.update(task, description="[red]✗ Input file not found")
+                live.stop()
+                clear_rich_console()
+                print_error(
+                    f"Input file not found at '{args.input}' (resolved to '{input_path}')"
+                )
+                return
+            else:
+                print_info(f"Input file: {input_path}")
+
+            if args.output:
+                output_dir = urdf_preprocess.resolve_path(args.output)
+                print_info(f"Using specified output directory: '{output_dir}'")
+            else:
+                print_warning("No output directory specified. Using input directory.")
+                output_dir = os.path.dirname(input_path)
+
+            base_name = os.path.basename(input_path)
+            file_name_without_ext = os.path.splitext(os.path.splitext(base_name)[0])[0]
+
+            output_dir = os.path.join(output_dir, file_name_without_ext)
+            os.makedirs(output_dir, exist_ok=True)
+            output_path = os.path.join(output_dir, f"{file_name_without_ext}.xml")
+
+            # temp_urdf_path: raw xacro-expanded (or original) URDF
+            temp_urdf_path = os.path.join(
+                output_dir, f"{file_name_without_ext}.temp.urdf"
+            )
+            # preprocessed_urdf_path: URDF after our preprocess_urdf() mutations
+            preprocessed_urdf_path = os.path.join(
+                output_dir, f"{file_name_without_ext}.preprocessed.urdf"
+            )
+
+            print_debug(f"Output directory set to: '{output_dir}'")
+            print_debug(f"Output file will be saved to: '{output_path}'")
+            progress.update(task, advance=1)
+
+            urdf_to_process = input_path
+
+            # Step 2: XACRO pre-processing
+            print_info("\n" + "=" * 100)
+            print_info("STEP 2: XACRO PROCESSING")
+            print_info("=" * 100)
+            progress.update(task, description="[cyan]Processing XACRO...")
+            if input_path.endswith(".xacro"):
+                print_debug(f"Input file '{base_name}' is a xacro file.")
+                print_debug(
+                    "-> Attempting to convert to URDF using the 'xacro' command..."
+                )
+
+                if not shutil.which("xacro"):
+                    progress.update(task, description="[red]✗ xacro command not found")
+                    live.stop()
+                    clear_rich_console()
+                    print_error(
+                        "The 'xacro' command is not in your PATH. Please install ROS 2 or the 'xacro' package."
+                    )
+                    return
+
+                try:
+                    xacro_command = ["xacro", input_path]
+                    if args.xacro_args:
+                        print_debug(
+                            f"-> Passing arguments to xacro: {' '.join(args.xacro_args)}"
+                        )
+                        xacro_command.extend(args.xacro_args)
+                    xacro_command.extend(["-o", temp_urdf_path])
+
+                    subprocess.run(xacro_command, check=True)
+                    urdf_to_process = temp_urdf_path
+                    print_confirm(
+                        f"-> Successfully converted xacro to temporary URDF: {urdf_to_process}"
+                    )
+                except (subprocess.CalledProcessError, FileNotFoundError) as e:
+                    progress.update(task, description="[red]✗ xacro processing failed")
+                    live.stop()
+                    clear_rich_console()
+                    print_error(f"Failed to run xacro processor.\n{e}")
+                    return
+            progress.update(task, advance=1)
+
+            root = None
+            custom_mujoco_elements = []
+            urdf_plugins = []
+
+            # Step 3: Pre-process URDF
+            print_info("\n" + "=" * 100)
+            print_info("STEP 3: PREPROCESSING URDF")
+            print_info("=" * 100)
+            progress.update(task, description="[cyan]Preprocessing URDF...")
             tracking_progress.append({"name": "Pre-process URDF"})
             (
                 modified_urdf_tree,
@@ -122,7 +184,13 @@ class URDFToMJCFConverter:
                 args.append_mesh_type,
                 args.zero_inertial_rpy,
             )
+            progress.update(task, advance=1)
 
+            # Step 4: Convert & Copy Meshes
+            print_info("\n" + "=" * 100)
+            print_info("STEP 4: PROCESSING MESHES")
+            print_info("=" * 100)
+            progress.update(task, description="[cyan]Processing meshes...")
             tracking_progress.append({"name": "Convert & Copy Meshes"})
             if not args.no_copy_meshes:
                 # Validate that only one simplification method is specified
@@ -206,27 +274,27 @@ class URDFToMJCFConverter:
                                 inertia_elem.set("iyz", str(inertia_info["iyz"]))
                                 inertia_elem.set("izz", str(inertia_info["izz"]))
 
-                                inertia_str = '\n'.join([
-                                    f"    <mass value=\"{inertia_info['mass']}\" />",
-                                    f"    <origin xyz=\"{com[0]} {com[1]} {com[2]}\" rpy=\"0 0 0\" />",
-                                    f"    <inertia ixx=\"{inertia_info['ixx']}\" ixy=\"{inertia_info['ixy']}\" ixz=\"{inertia_info['ixz']}\" iyy=\"{inertia_info['iyy']}\" iyz=\"{inertia_info['iyz']}\" izz=\"{inertia_info['izz']}\" />",
-                                ])
+                                inertia_str = "\n".join(
+                                    [
+                                        f'    <mass value="{inertia_info["mass"]}" />',
+                                        f'    <origin xyz="{com[0]} {com[1]} {com[2]}" rpy="0 0 0" />',
+                                        f'    <inertia ixx="{inertia_info["ixx"]}" ixy="{inertia_info["ixy"]}" ixz="{inertia_info["ixz"]}" iyy="{inertia_info["iyy"]}" iyz="{inertia_info["iyz"]}" izz="{inertia_info["izz"]}" />',
+                                    ]
+                                )
                                 print_confirm(
                                     f"   -> Updated inertial properties for link '{link_name}':\n{inertia_str}"
                                 )
                                 break
+            progress.update(task, advance=1)
 
-            ET.indent(modified_urdf_tree, space="\t")
-            # Write the modified/preprocessed URDF to a distinct file
-            modified_urdf_tree.write(preprocessed_urdf_path, encoding="unicode")
-
-            if args.save_preprocessed:
-                print_info(f"-> Saved pre-processed URDF to '{preprocessed_urdf_path}'")
-
-            # Validate mesh face counts before MuJoCo import
+            # Step 5: Validate mesh face counts before MuJoCo import
+            print_info("\n" + "=" * 100)
+            print_info("STEP 5: VALIDATING MESHES")
+            print_info("=" * 100)
+            progress.update(task, description="[cyan]Validating meshes...")
             if args.validate_mesh_faces:
                 tracking_progress.append({"name": "Validate Mesh Face Counts"})
-                print_info("Validating mesh files before MuJoCo import...")
+                print_debug("Validating mesh files before MuJoCo import...")
                 mesh_dir_full_path = os.path.join(output_dir, self.default_mesh_dir)
 
                 if os.path.exists(mesh_dir_full_path):
@@ -271,10 +339,26 @@ class URDFToMJCFConverter:
                     print_info(
                         f"No mesh directory found at '{mesh_dir_full_path}', skipping validation"
                     )
+            progress.update(task, advance=1)
 
-            print_info(
-                f"Loading pre-processed URDF to Mujoco: {preprocessed_urdf_path}"
-            )
+            # Step 6: Save preprocessed URDF
+            print_info("\n" + "=" * 100)
+            print_info("STEP 6: SAVING PRE-PROCESSED URDF")
+            print_info("=" * 100)
+            progress.update(task, description="[cyan]Saving preprocessed URDF...")
+            ET.indent(modified_urdf_tree, space="\t")
+            # Write the modified/preprocessed URDF to a distinct file
+            modified_urdf_tree.write(preprocessed_urdf_path, encoding="unicode")
+
+            if args.save_preprocessed:
+                print_confirm(f"-> Saved pre-processed URDF to '{preprocessed_urdf_path}'")
+            progress.update(task, advance=1)
+
+            # Step 7: Import URDF to MuJoCo
+            print_info("\n" + "=" * 100)
+            print_info("STEP 7: IMPORTING TO MUJOCO")
+            print_info("=" * 100)
+            progress.update(task, description="[cyan]Importing to MuJoCo...")
             tracking_progress.append({"name": "Import URDF to Mujoco"})
             model = mujoco.MjModel.from_xml_path(preprocessed_urdf_path)
 
@@ -286,11 +370,18 @@ class URDFToMJCFConverter:
 
             assert xml_string, "Failed to read back the generated MJCF XML"
             root = ET.fromstring(xml_string)
+            print_confirm(
+                f"Loaded pre-processed URDF to Mujoco: {preprocessed_urdf_path}"
+            )
+            progress.update(task, advance=1)
 
         except Exception as e:
             progress_str = ""
             if len(tracking_progress) > 0:
                 progress_str = tracking_progress[-1]["name"]
+            progress.update(task, description=f"[red]✗ Error during {progress_str}")
+            live.stop()
+            clear_rich_console()
             print_error(f'Error during "{progress_str}"\n{e}', exc_info=True)
             return
         finally:
@@ -302,11 +393,19 @@ class URDFToMJCFConverter:
                     os.remove(temp_urdf_path)
 
         if root is None:
+            progress.update(task, description="[red]✗ MJCF root element not created")
+            live.stop()
+            clear_rich_console()
             print_error("MJCF root element not created. Aborting.")
             return
 
+        # Step 8: Post-processing MJCF
+        print_info("\n" + "=" * 100)
+        print_info("STEP 8: POST-PROCESSING MJCF")
+        print_info("=" * 100)
+        progress.update(task, description="[cyan]Post-processing MJCF...")
         print_confirm(
-            "Loaded URDF to MJCF successfully. Applying post-processing MJCF..."
+            "-> Loaded URDF to MJCF successfully. Applying post-processing MJCF..."
         )
 
         # Apply damping multiplier if specified
@@ -372,14 +471,23 @@ class URDFToMJCFConverter:
             root, custom_mujoco_elements
         )
         mjcf_postprocess.post_process_group_ros_utils_plugins(root)
+        progress.update(task, advance=1)
 
+        # Save final output
+        progress.update(task, description="[cyan]Saving MJCF...")
         try:
             tree = ET.ElementTree(root)
             ET.indent(tree, space="\t")
             tree.write(output_path, encoding="utf-8", xml_declaration=True)
-            print_info(f"{'=' * 100}")
-            print_info("Successfully converted URDF to MJCF.")
-            print_base(f"Output saved to: {output_path}")
+            print_confirm("-> Saved final MJCF output.\n")
+            progress.update(task, description="[green]✓ Conversion complete!")
+            live.stop()
+            clear_rich_console()
+
+            print_info("\n" + "=" * 100)
+            print_info("CONVERSION COMPLETED SUCCESSFULLY")
+            print_info("=" * 100)
+            print_info(f"Output saved to: {output_path}")
             print_warning(
                 "REMEMBER TO BUILD THE PACKAGE SO THE ASSET FILES ARE COPIED OR LINKED!"
             )
@@ -389,6 +497,9 @@ class URDFToMJCFConverter:
                 f"\nRun this to simulate with installed mujoco:\n\nsimulate {abs_path}\n\n"
             )
         except Exception as e:
+            progress.update(task, description="[red]✗ Failed to save MJCF")
+            live.stop()
+            clear_rich_console()
             print_error(f"Failed to save the final MJCF file to '{output_path}'")
             print_error(f"Error details: {e}")
 
@@ -411,6 +522,6 @@ class URDFToMJCFConverter:
         try:
             with open(config_path, "w") as f:
                 json.dump(args_to_save, f, indent=4)
-            print_base(f"-> Arguments saved to '{config_path}'")
+            print_debug(f"-> Arguments saved to '{config_path}'")
         except Exception as e:
             print_warning(f"Could not save arguments to '{config_path}'. Error: {e}")

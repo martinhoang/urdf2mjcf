@@ -15,6 +15,7 @@ dependencies = [
     "coacd>=1.0.7",
     "pycollada>=0.8",
     "tqdm>=4.67.1",
+    "rich>=14.2.0",
 ]
 
 [project.scripts]

@@ -2,17 +2,57 @@ import logging
 import sys
 import traceback
 
-# --- ANSI Color Codes ---
-_BLACK = "\033[30m"
-_RED = "\033[91m"
-_GREEN = "\033[92m"
-_YELLOW = "\033[93m"
-_BLUE = "\033[94m"
-_MAGENTA = "\033[95m"
-_CYAN = "\033[96m"
-_WHITE = "\033[97m"
-_RESET = "\033[0m"
-_BOLD = "\033[1m"
+# --- Rich Console (optional) ---
+_rich_console = None
+
+def set_rich_console(console):
+    """Set rich console for proper output when Live display is active."""
+    global _rich_console
+    _rich_console = console
+
+def clear_rich_console():
+    """Clear rich console reference."""
+    global _rich_console
+    _rich_console = None
+
+# Terminal color codes
+class _TerminalColorMeta(type):
+    """Metaclass to dynamically generate BOLD_<COLOR> attributes."""
+
+    def __getattribute__(cls, name):
+        # First try normal attribute lookup
+        try:
+            return super().__getattribute__(name)
+        except AttributeError:
+            # If not found and it's a BOLD_ request, generate it
+            if name.startswith("BOLD_"):
+                color_name = name[5:]  # Remove "BOLD_" prefix
+                # Try to find the base color
+                try:
+                    base_color = super().__getattribute__(color_name)
+                    # Extract the ANSI code and modify it for bold
+                    color_label, ansi_code = base_color
+                    # Replace escape code with bold version: \033[Xm -> \033[1;Xm
+                    if ansi_code.startswith("\033[") and ansi_code.endswith("m"):
+                        code_num = ansi_code[2:-1]  # Extract the number part
+                        bold_ansi = f"\033[1;{code_num}m"
+                        return (f"bold {color_label}", bold_ansi)
+                except AttributeError:
+                    pass
+            raise AttributeError(
+                f"type object '{cls.__name__}' has no attribute '{name}'"
+            )
+
+
+class TerminalColor(metaclass=_TerminalColorMeta):
+    RED = ("red", "\033[91m")
+    GREEN = ("green", "\033[92m")
+    YELLOW = ("yellow", "\033[93m")
+    BLUE = ("blue", "\033[94m")
+    MAGENTA = ("magenta", "\033[95m")
+    CYAN = ("cyan", "\033[96m")
+    WHITE = ("white", "\033[97m")
+    RESET = ("reset", "\033[0m")
 
 # --- Log Level Configuration ---
 _log_level = logging.INFO
@@ -42,28 +82,46 @@ _logger = logging.getLogger("mujoco_converter")
 
 
 # --- Public Print Functions ---
-def print_base(message, level=logging.INFO, color=""):
-    """Internal logging function."""
+def print_base(message, level=logging.INFO, color=None):
+    """Internal logging function that respects rich console.
+    
+    Args:
+        message: The message to print
+        level: Logging level
+        color: Tuple of (color_label, ansi_code) from TerminalColor class, or None
+    """
     if level >= _log_level:
-        if color:
-            _logger.log(level, f"{color}{message}{_RESET}")
+        # If rich console is set, use it with rich markup for colors
+        if _rich_console:
+            if color:
+                color_label, _ = color  # Extract label from tuple
+                _rich_console.print(f"[{color_label}]{message}[/{color_label}]")
+            else:
+                _rich_console.print(message)
         else:
-            _logger.log(level, message)
+            # Use ANSI color codes for normal stdout
+            if color:
+                _, ansi_code = color  # Extract ANSI code from tuple
+                reset_code = TerminalColor.RESET[1]
+                formatted_message = f"{ansi_code}{message}{reset_code}"
+            else:
+                formatted_message = message
+            _logger.log(level, formatted_message)
 
 
 def print_info(message):
     """Prints an informational message in green."""
-    print_base(message, logging.INFO, _GREEN)
+    print_base(message, logging.INFO, TerminalColor.GREEN)
 
 
 def print_warning(message):
     """Prints a warning message in yellow."""
-    print_base(f"[WARNING] {message}", logging.WARNING, _YELLOW)
+    print_base(f"[WARNING] {message}", logging.WARNING, TerminalColor.YELLOW)
 
 
 def print_debug(message):
     """Prints a debug message in blue."""
-    print_base(f"[DEBUG] {message}", logging.DEBUG, _BLUE)
+    print_base(f"[DEBUG] {message}", logging.DEBUG, TerminalColor.BLUE)
 
 
 def print_error(message, exc_info=None):
@@ -76,7 +134,7 @@ def print_error(message, exc_info=None):
                                                 If an Exception object is passed, its traceback is printed.
                                                 Defaults to None.
     """
-    print_base(f"[ERROR] {message}", logging.ERROR, _RED)
+    print_base(f"[ERROR] {message}", logging.ERROR, TerminalColor.RED)
 
     # Determine if a traceback should be shown.
     # This can be triggered by the global flag or by passing exc_info.
@@ -97,7 +155,7 @@ def print_error(message, exc_info=None):
 
 def print_confirm(message):
     """Prints a confirmation message in magenta."""
-    print_base(message, logging.INFO, _MAGENTA)
+    print_base(message, logging.INFO, TerminalColor.MAGENTA)
 
 
 def parse_actuator_gains(value):

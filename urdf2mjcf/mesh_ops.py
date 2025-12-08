@@ -1,7 +1,9 @@
 import os
 import shutil
 import traceback
-from _utils import print_base, print_info, print_warning, print_error, print_confirm
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from threading import Lock
+from _utils import print_debug, print_info, print_warning, print_error, print_confirm
 
 try:
     import pymeshlab
@@ -20,11 +22,14 @@ except ImportError as e:
         f"Failed importing calculate_inertia tool: {e}\n{traceback.format_exc()}"
     )
     import sys
+
     sys.exit(1)
     CALCULATE_INERTIA_AVAILABLE = False
 
 try:
-    from urdf2mjcf.tools.generate_collision_mesh import process_mesh as generate_collision_mesh
+    from urdf2mjcf.tools.generate_collision_mesh import (
+        process_mesh as generate_collision_mesh,
+    )
 
     GENERATE_COLLISION_AVAILABLE = True
 except ImportError:
@@ -37,10 +42,14 @@ try:
 except ImportError:
     SIMPLIFY_MESH_TOOL_AVAILABLE = False
 
+# Global lock for pymeshlab operations (not thread-safe)
+_pymeshlab_lock = Lock()
+
 
 def simplify_mesh(input_file, output_file, target_reduction=0.95, combine_meshes=False):
     """
     Simplify one mesh file. Will require pymeshlab.
+    Thread-safe: Uses global lock to prevent concurrent pymeshlab operations.
 
     Args:
             input_file (str): Path to input mesh file.
@@ -49,41 +58,44 @@ def simplify_mesh(input_file, output_file, target_reduction=0.95, combine_meshes
 
     """
     print(f"Simplifying: {input_file}")
-    try:
-        ms = pymeshlab.MeshSet()
-        ms.load_new_mesh(input_file)
+    with _pymeshlab_lock:  # Serialize pymeshlab operations
+        try:
+            ms = pymeshlab.MeshSet()
+            ms.load_new_mesh(input_file)
 
-        target_percentage = 1.0 - target_reduction
+            target_percentage = 1.0 - target_reduction
 
-        if len(ms) > 1:
-            combine_mesh_str = (
-                " Combining all meshes into one before simplification."
-                if combine_meshes
-                else "Convert them separately unless --combine-meshes is set."
-            )
-            print_warning(f"Multiple meshes found in {input_file}.{combine_mesh_str}")
+            if len(ms) > 1:
+                combine_mesh_str = (
+                    " Combining all meshes into one before simplification."
+                    if combine_meshes
+                    else "Convert them separately unless --combine-meshes is set."
+                )
+                print_warning(
+                    f"Multiple meshes found in {input_file}.{combine_mesh_str}"
+                )
 
-        for i in range(len(ms)):
-            ms.set_current_mesh(i)
-            ms.apply_filter(
-                "meshing_decimation_quadric_edge_collapse",
-                targetperc=target_percentage,
-                preservenormal=True,
-            )
-            output_dir = os.path.dirname(output_file)
-            if output_dir:
-                os.makedirs(output_dir, exist_ok=True)
+            for i in range(len(ms)):
+                ms.set_current_mesh(i)
+                ms.apply_filter(
+                    "meshing_decimation_quadric_edge_collapse",
+                    targetperc=target_percentage,
+                    preservenormal=True,
+                )
+                output_dir = os.path.dirname(output_file)
+                if output_dir:
+                    os.makedirs(output_dir, exist_ok=True)
 
-            modified_output_file = output_file
-            if len(ms) > 1 and not combine_meshes:
-                base, ext = os.path.splitext(output_file)
-                modified_output_file = f"{base}_{i}{ext}"
-            ms.save_current_mesh(modified_output_file)
+                modified_output_file = output_file
+                if len(ms) > 1 and not combine_meshes:
+                    base, ext = os.path.splitext(output_file)
+                    modified_output_file = f"{base}_{i}{ext}"
+                ms.save_current_mesh(modified_output_file)
 
-            print(f"Saved simplified mesh to: {modified_output_file}")
-    except Exception as e:
-        print_error(f"Failed to process {input_file}: {e}")
-        raise RuntimeError(f"Mesh simplification failed for {input_file}.")
+                print(f"Saved simplified mesh to: {modified_output_file}")
+        except Exception as e:
+            print_error(f"Failed to process {input_file}: {e}")
+            raise RuntimeError(f"Mesh simplification failed for {input_file}.")
 
 
 def count_mesh_faces(mesh_file):
@@ -144,9 +156,10 @@ def count_mesh_faces(mesh_file):
         elif ext == ".dae":
             # DAE files are complex, use pymeshlab if available
             if PYMESHLAB_AVAILABLE:
-                ms = pymeshlab.MeshSet()
-                ms.load_new_mesh(mesh_file)
-                total_faces = sum(ms.mesh(i).face_number() for i in range(len(ms)))
+                with _pymeshlab_lock:  # Serialize pymeshlab operations
+                    ms = pymeshlab.MeshSet()
+                    ms.load_new_mesh(mesh_file)
+                    total_faces = sum(ms.mesh(i).face_number() for i in range(len(ms)))
                 return total_faces
             else:
                 print_warning(
@@ -199,13 +212,15 @@ def validate_and_fix_mesh_faces(
     return False, face_count, 0
 
 
-def validate_all_meshes_in_directory(mesh_dir, max_faces=200000):
+def validate_all_meshes_in_directory(mesh_dir, max_faces=200000, max_workers=None):
     """
     Scan all mesh files in a directory and report which ones exceed MuJoCo's face limit.
+    Uses parallel processing for faster validation of multiple meshes.
 
     Args:
             mesh_dir (str): Directory containing mesh files
             max_faces (int): Maximum allowed faces per mesh
+            max_workers (int): Maximum number of parallel workers (None = auto-detect)
 
     Returns:
             list: List of tuples (mesh_file, face_count, suggested_target) for meshes that need fixing
@@ -217,32 +232,76 @@ def validate_all_meshes_in_directory(mesh_dir, max_faces=200000):
 
     supported_extensions = [".stl", ".obj", ".dae"]
 
+    # Collect all mesh files first
+    mesh_files = []
     for root, dirs, files in os.walk(mesh_dir):
         for filename in files:
             ext = os.path.splitext(filename)[1].lower()
             if ext in supported_extensions:
                 mesh_path = os.path.join(root, filename)
-                needs_fix, face_count, suggested_target = validate_and_fix_mesh_faces(
-                    mesh_path, max_faces
-                )
+                mesh_files.append(mesh_path)
 
-                if needs_fix:
-                    problematic_meshes.append((mesh_path, face_count, suggested_target))
+    if not mesh_files:
+        return problematic_meshes
+
+    # Determine worker count
+    if max_workers is None:
+        max_workers = min(len(mesh_files), os.cpu_count() or 4)
+
+    def _validate_single_mesh(mesh_path):
+        """Validate a single mesh file."""
+        needs_fix, face_count, suggested_target = validate_and_fix_mesh_faces(
+            mesh_path, max_faces
+        )
+        if needs_fix:
+            return (mesh_path, face_count, suggested_target)
+        return None
+
+    # Process meshes in parallel
+    if max_workers > 1 and len(mesh_files) > 1:
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(_validate_single_mesh, mesh_path): mesh_path
+                for mesh_path in mesh_files
+            }
+
+            for future in as_completed(futures):
+                try:
+                    result = future.result()
+                    if result:
+                        problematic_meshes.append(result)
+                except Exception as e:
+                    mesh_path = futures[future]
+                    print_warning(
+                        f"Error validating {os.path.basename(mesh_path)}: {e}"
+                    )
+    else:
+        # Sequential processing fallback
+        for mesh_path in mesh_files:
+            result = _validate_single_mesh(mesh_path)
+            if result:
+                problematic_meshes.append(result)
 
     return problematic_meshes
 
 
 def fix_oversized_meshes(
-    mesh_dir, max_faces=200000, target_reduction_ratio=0.5, backup=True
+    mesh_dir,
+    max_faces=200000,
+    target_reduction_ratio=0.5,
+    backup=True,
+    max_workers=None,
 ):
     """
     Automatically fix all meshes in a directory that exceed MuJoCo's face limit.
+    Uses parallel processing for faster mesh simplification.
 
     Args:
             mesh_dir (str): Directory containing mesh files
             max_faces (int): Maximum allowed faces per mesh (default: 200000)
             target_reduction_ratio (float): Target face count as ratio of max_faces (default: 0.5)
             backup (bool): Create .bak backup of original files before modifying
+            max_workers (int): Maximum number of parallel workers (None = auto-detect)
 
     Returns:
             tuple: (fixed_count, failed_count)
@@ -253,23 +312,32 @@ def fix_oversized_meshes(
         )
         return 0, 0
 
-    problematic_meshes = validate_all_meshes_in_directory(mesh_dir, max_faces)
+    problematic_meshes = validate_all_meshes_in_directory(
+        mesh_dir, max_faces, max_workers
+    )
 
     if not problematic_meshes:
         return 0, 0
 
-    print_warning(
+    print_debug(
         f"Found {len(problematic_meshes)} mesh(es) exceeding MuJoCo's {max_faces:,} face limit:"
     )
     for mesh_path, face_count, suggested_target in problematic_meshes:
-        print_warning(
+        print_debug(
             f"  - {os.path.basename(mesh_path)}: {face_count:,} faces (target: {suggested_target:,})"
         )
 
     fixed_count = 0
     failed_count = 0
 
-    for mesh_path, face_count, suggested_target in problematic_meshes:
+    # Thread-safe counter locks
+    count_lock = Lock()
+
+    def _fix_single_mesh(mesh_info):
+        """Fix a single oversized mesh."""
+        nonlocal fixed_count, failed_count
+        mesh_path, face_count, suggested_target = mesh_info
+
         try:
             # Create backup if requested
             if backup:
@@ -278,17 +346,18 @@ def fix_oversized_meshes(
                     shutil.copy2(mesh_path, backup_path)
                     print_info(f"Created backup: {os.path.basename(backup_path)}")
 
-            print_info(
+            print_debug(
                 f"Simplifying {os.path.basename(mesh_path)}: {face_count:,} → {suggested_target:,} faces"
             )
 
-            # Use simplify_mesh_tool with target_faces parameter
-            simplify_mesh_tool(
-                mesh_path,
-                mesh_path,  # Overwrite original
-                target_reduction=None,
-                target_faces=suggested_target,
-            )
+            # Use simplify_mesh_tool with target_faces parameter (protected by lock)
+            with _pymeshlab_lock:
+                simplify_mesh_tool(
+                    mesh_path,
+                    mesh_path,  # Overwrite original
+                    target_reduction=None,
+                    target_faces=suggested_target,
+                )
 
             # Verify the fix
             new_face_count = count_mesh_faces(mesh_path)
@@ -296,16 +365,42 @@ def fix_oversized_meshes(
                 print_confirm(
                     f"✓ Successfully reduced {os.path.basename(mesh_path)} to {new_face_count:,} faces"
                 )
-                fixed_count += 1
+                with count_lock:
+                    fixed_count += 1
             else:
                 print_warning(
                     f"⚠ {os.path.basename(mesh_path)} may still have issues (detected: {new_face_count:,} faces)"
                 )
-                fixed_count += 1  # Count as fixed even if verification is uncertain
+                with count_lock:
+                    fixed_count += 1  # Count as fixed even if verification is uncertain
 
         except Exception as e:
             print_error(f"✗ Failed to simplify {os.path.basename(mesh_path)}: {e}")
-            failed_count += 1
+            with count_lock:
+                failed_count += 1
+
+    # Determine worker count
+    if max_workers is None:
+        max_workers = min(len(problematic_meshes), os.cpu_count() or 4)
+
+    # Process meshes in parallel
+    if max_workers > 1 and len(problematic_meshes) > 1:
+        print_debug(f"Fixing meshes with {max_workers} parallel workers...")
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [
+                executor.submit(_fix_single_mesh, mesh_info)
+                for mesh_info in problematic_meshes
+            ]
+
+            for future in as_completed(futures):
+                try:
+                    future.result()
+                except Exception as e:
+                    print_error(f"Unexpected error during parallel mesh fixing: {e}")
+    else:
+        # Sequential processing fallback
+        for mesh_info in problematic_meshes:
+            _fix_single_mesh(mesh_info)
 
     return fixed_count, failed_count
 
@@ -321,9 +416,10 @@ def copy_mesh_files(
     simplify_meshes=False,
     simplify_params=None,
     raise_on_error=True,
+    max_workers=None,
 ):
     """
-    Copy mesh files to output dir.
+    Copy mesh files to output dir with parallel processing support.
     Support STL/OBJ. Convert DAE->STL via pymeshlab or extract multiple meshes from DAE with materials.
 
     Args:
@@ -337,9 +433,11 @@ def copy_mesh_files(
             simplify_meshes: Whether to simplify meshes using the simplify tool
             simplify_params: Dict with optional 'reduction' (0.0-1.0), 'target_faces' (int), 'translation', 'scale' for mesh simplification
             raise_on_error: Whether to raise exceptions on errors
+            max_workers: Maximum number of parallel workers (None = auto-detect based on CPU count)
 
     Returns:
-            dict: Material information for extracted visual meshes only, organized by link name:
+            tuple: (material_info, inertia_data)
+                    material_info: Material information for extracted visual meshes only, organized by link name:
                     {
                             'link_name': {
                                     'visual': [
@@ -353,18 +451,24 @@ def copy_mesh_files(
                             }
                     }
                     Note: Only visual meshes have material info. Collision meshes don't need materials.
+                    inertia_data: Calculated inertia data for links
     """
     print_info("Copying mesh files...")
     if not absolute_mesh_paths:
-        print_base("-> No meshes to copy.")
-        return {}
+        print_warning("-> No meshes to copy.")
+        return {}, {}
 
     # Material information to be returned
     material_info = {}
     # Inertia data to be returned
     inertia_data = {}
 
-    # Check tool availability and warn if requested but not available
+    # Thread-safe locks for shared data structures
+    material_lock = Lock()
+    inertia_lock = Lock()
+    counter_lock = (
+        Lock()
+    )  # Check tool availability and warn if requested but not available
     if calculate_inertia_flag and not CALCULATE_INERTIA_AVAILABLE:
         print_warning(
             "Inertia calculation requested but trimesh library not available. Install with: pip install trimesh[easy]"
@@ -386,6 +490,7 @@ def copy_mesh_files(
     SUPPORTED_FORMATS = {".stl", ".obj"}
     CONVERTIBLE_FORMATS = {".dae"}
 
+    # Counters for statistics (access protected by counter_lock)
     copied_count = 0
     converted_count = 0
     ignored_count = 0
@@ -398,7 +503,7 @@ def copy_mesh_files(
 
         Returns: List of dicts with material info for each mesh (empty for now).
         """
-        nonlocal copied_count, converted_count, ignored_count, material_info
+        nonlocal copied_count, converted_count, ignored_count
 
         is_valid = isinstance(srcs, list) and isinstance(dsts, list)
         is_valid |= isinstance(srcs, str) and isinstance(dsts, str)
@@ -438,11 +543,12 @@ def copy_mesh_files(
                 modified_dest = os.path.join(output_mesh_dir, dest_name)
                 try:
                     shutil.copy2(src, modified_dest)
-                    copied_count += 1
+                    with counter_lock:
+                        copied_count += 1
                     mesh_materials.append(
                         {"file": dest_name, "material": None, "rgba": None}
                     )
-                    print_base(
+                    print_debug(
                         f"Copied '{mesh_type}' mesh '{src_name}' to '{dest_name}'."
                     )
                 except Exception as e:
@@ -464,14 +570,15 @@ def copy_mesh_files(
                 try:
                     modified_dest = os.path.join(output_mesh_dir, dest_name)
                     simplify_mesh(src, modified_dest, mesh_reduction)
-                    print_base(
+                    print_debug(
                         f"-> Converted mesh:\n\tFrom: '{src}' ({src_ext.upper()})\n\tTo: '{modified_dest}' ({dest_ext.upper()})"
                     )
-                    converted_count += 1
+                    with counter_lock:
+                        converted_count += 1
                     mesh_materials.append(
                         {"file": dest_name, "material": None, "rgba": None}
                     )
-                    print_base(
+                    print_debug(
                         f"Copied '{mesh_type}' mesh '{src_name}' to '{dest_name}'."
                     )
                 except Exception as e:
@@ -483,7 +590,8 @@ def copy_mesh_files(
                             f"Failed to convert mesh from '{src}' to '{modified_dest}'."
                         )
                     else:
-                        ignored_count += 1
+                        with counter_lock:
+                            ignored_count += 1
             else:
                 print_warning(
                     f"Unsupported mesh format '{src_ext}' for file '{os.path.basename(src)}'. Ignoring."
@@ -493,7 +601,8 @@ def copy_mesh_files(
                         f"Unsupported mesh format '{src_ext}' for file '{os.path.basename(src)}'."
                     )
                 else:
-                    ignored_count += 1
+                    with counter_lock:
+                        ignored_count += 1
 
         return mesh_materials
 
@@ -514,14 +623,16 @@ def copy_mesh_files(
                 print_info(
                     f"Simplifying {mesh_type_name} mesh for link '{link_name}': {os.path.basename(mesh_file_path)}"
                 )
-                simplify_mesh_tool(
-                    mesh_file_path,
-                    mesh_file_path,
-                    reduction,
-                    target_faces,
-                    translation,
-                    scale,
-                )
+                # Protected by lock to prevent concurrent pymeshlab access
+                with _pymeshlab_lock:
+                    simplify_mesh_tool(
+                        mesh_file_path,
+                        mesh_file_path,
+                        reduction,
+                        target_faces,
+                        translation,
+                        scale,
+                    )
                 print_confirm(
                     f"-> Simplified {mesh_type_name} mesh: {os.path.basename(mesh_file_path)}"
                 )
@@ -575,7 +686,7 @@ def copy_mesh_files(
                     if mesh_type_scales:
                         # Use the first scale value (assuming one mesh per link for inertia calc)
                         scale = mesh_type_scales[0]
-                    
+
                     translation = None
                     orientation = None
 
@@ -587,8 +698,9 @@ def copy_mesh_files(
                     )
 
                     if calculated_inertia:
-                        # Store inertia data for this link
-                        inertia_data[link_name] = calculated_inertia
+                        # Store inertia data for this link (thread-safe)
+                        with inertia_lock:
+                            inertia_data[link_name] = calculated_inertia
                         print_confirm(
                             f"-> Calculated inertia for link '{link_name}' (mass: {link_mass} kg):"
                         )
@@ -614,28 +726,31 @@ def copy_mesh_files(
                 f"Inertia calculation requested but no link properties provided. Skipping for link '{link_name}'."
             )
 
-    for link, mesh_path in absolute_mesh_paths.items():
+    def _process_link_mesh(link, mesh_path):
+        """Process meshes for a single link (visual and/or collision)."""
         # Some meshes dont have visual or collision, skip those
         if len(mesh_path) == 0:
-            continue
+            return
 
-        # Initialize material info for this link
-        if link not in material_info:
-            material_info[link] = {}
+        # Initialize material info for this link (thread-safe)
+        with material_lock:
+            if link not in material_info:
+                material_info[link] = {}
 
         if "visual" in mesh_path:
             visual_src = mesh_path["visual"]["from"]
             visual_dst = mesh_path["visual"]["to"]
-            print_base(
+            print_debug(
                 f"Processing 'visual' mesh for link '{link}':\n\tFrom: {visual_src}\n\tTo: {visual_dst}"
             )
             visual_materials = _copy_with_conflict_check(
                 "visual", srcs=visual_src, dsts=visual_dst, link_name=link
             )
 
-            # Store material info for visual meshes
+            # Store material info for visual meshes (thread-safe)
             if visual_materials:
-                material_info[link]["visual"] = visual_materials
+                with material_lock:
+                    material_info[link]["visual"] = visual_materials
 
             # Apply mesh tools to visual meshes
             if isinstance(visual_dst, list):
@@ -651,7 +766,7 @@ def copy_mesh_files(
         if "collision" in mesh_path:
             collision_src = mesh_path["collision"]["from"]
             collision_dst = mesh_path["collision"]["to"]
-            print_base(
+            print_debug(
                 f"Processing 'collision' mesh for link '{link}':\n\tFrom: {collision_src}\n\tTo: {collision_dst}"
             )
             # Collision meshes don't need material info, so we don't store the return value
@@ -672,6 +787,33 @@ def copy_mesh_files(
                 )
                 _apply_mesh_tools(final_dst, link, "collision")
 
+    # Process all links in parallel
+    if max_workers is None:
+        max_workers = min(len(absolute_mesh_paths), os.cpu_count() or 4)
+
+    if max_workers > 1 and len(absolute_mesh_paths) > 1:
+        print_info(f"Processing meshes with {max_workers} parallel workers...")
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all link processing tasks
+            futures = {
+                executor.submit(_process_link_mesh, link, mesh_path): link
+                for link, mesh_path in absolute_mesh_paths.items()
+            }
+
+            # Wait for all tasks to complete and handle exceptions
+            for future in as_completed(futures):
+                link = futures[future]
+                try:
+                    future.result()
+                except Exception as e:
+                    print_error(f"Error processing meshes for link '{link}': {e}")
+                    if raise_on_error:
+                        raise
+    else:
+        # Sequential processing (fallback for single link or max_workers=1)
+        for link, mesh_path in absolute_mesh_paths.items():
+            _process_link_mesh(link, mesh_path)
+
     total_processed = copied_count + converted_count + ignored_count
     summary_parts = []
     if copied_count > 0:
@@ -690,6 +832,6 @@ def copy_mesh_files(
                 f"-> Processed {total_processed} mesh files: {', '.join(summary_parts)}"
             )
     else:
-        print_base(f"-> No mesh files processed. Output: '{output_mesh_dir}'")
+        print_warning(f"-> No mesh files processed. Output: '{output_mesh_dir}'")
 
     return material_info, inertia_data

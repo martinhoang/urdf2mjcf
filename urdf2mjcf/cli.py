@@ -361,7 +361,6 @@ def main():
             raise ValueError(
                 f"Input file must be a URDF (.urdf) or xacro (.xacro) file, not {input_ext}"
             )
-        print_info(f"Input file: {args.input}")
 
     # Update log level again in case it was in the config
     set_log_level(args.log_level, args.traceback)

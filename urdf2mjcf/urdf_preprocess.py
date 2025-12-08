@@ -190,7 +190,7 @@ def resolve_path(path):
             var_name = match.group(1)
             env_value = os.environ.get(var_name)
             if env_value is not None:
-                print_info(
+                print_debug(
                     f"Resolved environment variable '{var_name}' to '{env_value}'"
                 )
                 return env_value
@@ -295,7 +295,7 @@ def preprocess_urdf(
     zero_inertial_rpy=True,
 ):
     """Pre-process URDF for MuJoCo compatibility."""
-    print_base("Pre-processing URDF...")
+    print_debug("Pre-processing URDF...")
     urdf_tree = ET.parse(urdf_path)
     root = urdf_tree.getroot()
 
@@ -313,7 +313,7 @@ def preprocess_urdf(
 
     # First pass: Zero inertial orientations if requested
     if zero_inertial_rpy:
-        print_info("Zeroing inertial orientations (transforming inertia tensors)...")
+        print_debug("Zeroing inertial orientations (transforming inertia tensors)...")
         transformed_count = 0
         for link_node in link_nodes:
             if zero_inertial_orientation(link_node):
@@ -330,7 +330,7 @@ def preprocess_urdf(
         # Initialize link properties
         if link_name not in link_properties:
             link_properties[link_name] = {"mass": None, "mesh_scales": {}}
-        
+
         # Extract mass from inertial element if present
         inertial_elem = link_node.find("inertial")
         if inertial_elem is not None:
@@ -361,7 +361,7 @@ def preprocess_urdf(
 
             file_path = mesh_elem.get("filename", "")
             src_path = resolve_path(file_path)
-            
+
             # Extract scale attribute if present
             scale_str = mesh_elem.get("scale", "1 1 1")
             try:
@@ -369,7 +369,9 @@ def preprocess_urdf(
                 # Use the first value (assuming uniform scaling for inertia calculation)
                 mesh_scale = scale_parts[0] if scale_parts else 1.0
             except (ValueError, IndexError):
-                print_warning(f"Invalid scale '{scale_str}' for mesh in link '{link_name}', using 1.0")
+                print_warning(
+                    f"Invalid scale '{scale_str}' for mesh in link '{link_name}', using 1.0"
+                )
                 mesh_scale = 1.0
 
             if not src_path or not os.path.isfile(src_path):
@@ -468,11 +470,16 @@ def preprocess_urdf(
                                 link_dict["visual"] = {"from": [], "to": []}
                             link_dict["visual"]["from"].append(temp_mesh_path)
                             link_dict["visual"]["to"].append(dest_file)
-                            
+
                             # Store scale for this mesh
-                            if "visual" not in link_properties[link_name]["mesh_scales"]:
+                            if (
+                                "visual"
+                                not in link_properties[link_name]["mesh_scales"]
+                            ):
                                 link_properties[link_name]["mesh_scales"]["visual"] = []
-                            link_properties[link_name]["mesh_scales"]["visual"].append(mesh_scale)
+                            link_properties[link_name]["mesh_scales"]["visual"].append(
+                                mesh_scale
+                            )
                     else:
                         print_warning(
                             f"Failed to extract meshes from '{base_name}', using fallback single-mesh conversion"
@@ -524,7 +531,7 @@ def preprocess_urdf(
                     link_dict["visual"] = {"from": [], "to": []}
                 link_dict["visual"]["from"].append(src_path)
                 link_dict["visual"]["to"].append(dest_path)
-                
+
                 # Store scale for this mesh
                 if "visual" not in link_properties[link_name]["mesh_scales"]:
                     link_properties[link_name]["mesh_scales"]["visual"] = []
@@ -535,14 +542,16 @@ def preprocess_urdf(
         for mesh_elem in collision_mesh_nodes:
             file_path = mesh_elem.get("filename", "")
             src_path = resolve_path(file_path)
-            
+
             # Extract scale attribute if present
             scale_str = mesh_elem.get("scale", "1 1 1")
             try:
                 scale_parts = [float(s) for s in scale_str.split()]
                 mesh_scale = scale_parts[0] if scale_parts else 1.0
             except (ValueError, IndexError):
-                print_warning(f"Invalid scale '{scale_str}' for collision mesh in link '{link_name}', using 1.0")
+                print_warning(
+                    f"Invalid scale '{scale_str}' for collision mesh in link '{link_name}', using 1.0"
+                )
                 mesh_scale = 1.0
 
             if not src_path or not os.path.isfile(src_path):
@@ -568,7 +577,7 @@ def preprocess_urdf(
                 link_dict["collision"] = {"from": [], "to": []}
             link_dict["collision"]["from"].append(src_path)
             link_dict["collision"]["to"].append(dest_path)
-            
+
             # Store scale for this collision mesh
             if "collision" not in link_properties[link_name]["mesh_scales"]:
                 link_properties[link_name]["mesh_scales"]["collision"] = []
@@ -656,7 +665,7 @@ def preprocess_urdf(
             absolute_mesh_paths_str += f"\n{' ' * 3}from:\n\t{src_path_from_str}"
             absolute_mesh_paths_str += f"\n{' ' * 3}to:\n\t{src_path_to_str}"
         absolute_mesh_paths_str += "\n"
-    print_info(absolute_mesh_paths_str)
+    print_debug(absolute_mesh_paths_str)
 
     ###########################
     # Process <mujoco> tags
@@ -666,7 +675,7 @@ def preprocess_urdf(
     compiler_node = None
 
     if all_mujoco_nodes:
-        print_info(
+        print_debug(
             f"-> Found {len(all_mujoco_nodes)} <mujoco> tags in URDF. Merging them."
         )
         # Merge all mujoco nodes recursively
@@ -701,7 +710,7 @@ def preprocess_urdf(
 
     if custom_mujoco_elements:
         tags = [e.tag for e in custom_mujoco_elements]
-        print_base(
+        print_debug(
             f"-> Found {len(custom_mujoco_elements)} custom MuJoCo elements to inject: {', '.join(tags)}"
         )
         # Debug: show each element's attributes
@@ -731,7 +740,7 @@ def preprocess_urdf(
     for key, value in final_compiler_attrs.items():
         compiler_node.set(key, value)
 
-    print_base(f"-> Set <compiler> tag attributes to: {final_compiler_attrs}")
+    print_debug(f"-> Set <compiler> tag attributes to: {final_compiler_attrs}")
 
     ###########################
     # Process mimic joints
@@ -751,7 +760,7 @@ def preprocess_urdf(
                     "offset": offset,
                 }
     if mimic_joints:
-        print_base(f"-> Found mimic joints: {', '.join(mimic_joints.keys())}")
+        print_debug(f"-> Found mimic joints: {', '.join(mimic_joints.keys())}")
 
     ###########################
     # Process ros2 control tags
@@ -772,7 +781,7 @@ def preprocess_urdf(
 
     if ros2c_joint_map:
         for jname, ifaces in ros2c_joint_map.items():
-            print_base(
+            print_debug(
                 f"-> Joint '{jname}' has command interfaces: {', '.join(ifaces)}"
             )
 

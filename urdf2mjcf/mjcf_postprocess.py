@@ -5,7 +5,6 @@ import xml.etree.ElementTree as ET
 
 from . import urdf_preprocess, xml_utils
 from _utils import (
-    print_base,
     print_debug,
     print_info,
     print_warning,
@@ -18,7 +17,7 @@ def post_process_damping_multiplier(root, damping_multiplier):
 		if "damping" in joint.attrib:
 				original_damping = float(joint.get("damping"))
 				joint.set("damping", str(original_damping * damping_multiplier))
-		print_base(f"-> Multiplied joint damping by a factor of {damping_multiplier}.")
+		print_debug(f"-> Multiplied joint damping by a factor of {damping_multiplier}.")
 
 def post_process_compiler_options(root):
 	"""Apply compiler options captured from URDF into final MJCF."""
@@ -37,7 +36,7 @@ def post_process_compiler_options(root):
 	attrs_to_copy = compiler_node.attrib
 	for key, value in attrs_to_copy.items():
 		final_compiler_node.set(key, value)
-	print_base(f"-> Applied post-processing to <compiler> tag with attributes: {attrs_to_copy}")
+	print_debug(f"-> Applied post-processing to <compiler> tag with attributes: {attrs_to_copy}")
 
 def _parse_attr_string(attr_str, separator=" "):
 	"""Parse attribute string with given separator into a dictionary.
@@ -216,7 +215,7 @@ def _apply_custom_operations(target_node, operations):
 	
 	# Log final result
 	target_attrs_str = ", ".join([f"{k}='{v}'" for k, v in target_node.attrib.items()])
-	print_base(f"Applied custom operations to element: <{target_node.tag} {target_attrs_str}>")
+	print_debug(f"Applied custom operations to element: <{target_node.tag} {target_attrs_str}>")
 
 def post_process_inject_custom_mujoco_elements(root, elements):
 	"""Inject elements from URDF <mujoco> into MJCF.
@@ -226,7 +225,7 @@ def post_process_inject_custom_mujoco_elements(root, elements):
 		return
 
 	elements_str = "\n" + "\n".join([ET.tostring(elem, encoding="unicode") for elem in elements])
-	print_info(f"-> Injecting custom MJCF elements from URDF: {elements_str}")
+	print_debug(f"-> Injecting custom MJCF elements from URDF: {elements_str}")
 	
 	def _process_element_recursively(elem, parent_context=None):
 		"""Process an element and its children recursively."""
@@ -269,13 +268,13 @@ def post_process_inject_custom_mujoco_elements(root, elements):
 				
 				for target_node in matching_targets:
 					target_attrs_str = ", ".join([f"{k}='{v}'" for k, v in target_node.attrib.items()])
-					print_info(f"Injecting {len(children_to_inject)} child element(s) into <{target_node.tag} {target_attrs_str}>")
+					print_debug(f"Injecting {len(children_to_inject)} child element(s) into <{target_node.tag} {target_attrs_str}>")
 					
 					for child in children_to_inject:
 						child_copy = copy.deepcopy(child)
 						target_node.append(child_copy)
 						child_attrs_str = ", ".join([f"{k}='{v}'" for k, v in child_copy.attrib.items()])
-						print_confirm(f"  -> Injected <{child_copy.tag} {child_attrs_str}> into matching <{target_node.tag}>")
+						print_debug(f"  -> Injected <{child_copy.tag} {child_attrs_str}> into matching <{target_node.tag}>")
 			else:
 				match_attrs_str = ", ".join([f"{k}='{v}'" for k, v in match_attrs.items()])
 				context_desc = f"within {parent_context.tag}" if parent_context is not None else "globally"
@@ -410,15 +409,15 @@ def post_process_transform_and_add_custom_plugin(root, urdf_plugin_node):
 		has_params = True
 
 	if has_params:
-		print_base(f"-> Transformed and added custom plugin '{plugin_name}' with parameters.")
+		print_debug(f"-> Transformed and added custom plugin '{plugin_name}' with parameters.")
 	else:
-		print_base(f"-> Transformed and added custom plugin '{plugin_name}'.")
+		print_debug(f"-> Transformed and added custom plugin '{plugin_name}'.")
 
 def post_process_add_floor(root):
 	"""Add a floor plane."""
 	is_floor_exists = root.find(".//geom[@name='floor']")
 	if is_floor_exists is not None:
-		print_base("-> Floor plane already exists in the model; skipping addition.")
+		print_debug("-> Floor plane already exists in the model; skipping addition.")
 		return
 	asset = root.find("asset")
 	if asset is None:
@@ -463,7 +462,7 @@ def post_process_add_floor(root):
 			},
 		)
 
-	print_base("-> Added a floor plane to the model.")
+	print_debug("-> Added a floor plane to the model.")
 
 def post_process_add_light(root):
 	"""Add a default light."""
@@ -474,7 +473,7 @@ def post_process_add_light(root):
 			"light",
 			{"diffuse": ".8 .8 .8", "pos": "0 0 5", "dir": "0 0 -1"},
 		)
-		print_base("-> Added a default light to the model.")
+		print_debug("-> Added a default light to the model.")
 
 def post_process_add_clock_publisher_plugin(root):
 	"""Add clock publisher plugin."""
@@ -507,7 +506,7 @@ def post_process_add_clock_publisher_plugin(root):
 	ET.SubElement(
 		clock_publisher_node, "config", {"key": "use_sim_time", "value": "true"}
 	)
-	print_base("-> Added 'MujocoRosUtils::ClockPublisher' plugin to the model.")
+	print_debug("-> Added 'MujocoRosUtils::ClockPublisher' plugin to the model.")
 
 def post_process_add_ros2_control_plugin(root, default_ros2_control_instance, config_file=None):
 	"""Add Ros2Control plugin."""
@@ -535,7 +534,7 @@ def post_process_add_ros2_control_plugin(root, default_ros2_control_instance, co
 		print_warning("No <worldbody> found in the model. Cannot add Ros2Control plugin.")
 		return
 
-	print_base("-> Added 'MujocoRosUtils::Ros2Control' plugin to the model.")
+	print_debug("-> Added 'MujocoRosUtils::Ros2Control' plugin to the model.")
 
 def post_process_group_ros_utils_plugins(root):
 	"""Group all MujocoRosUtils plugins together under <extension> with comment markers."""
@@ -569,7 +568,7 @@ def post_process_make_base_floating(root, height_above_ground=0.0):
 		if base_body is not None:
 			if base_body.find('joint[@type="free"]') is None:
 				ET.SubElement(base_body, "joint", {"name": "root", "type": "free"})
-				print_base(
+				print_debug(
 					f"-> Made the base link '{base_body.get('name')}' floating with a free joint."
 				)
 		
@@ -583,7 +582,7 @@ def post_process_add_gravity_compensation(root):
 		bodies = worldbody.findall(".//body")
 		for body in bodies:
 			body.set("gravcomp", "1")
-		print_base(f"-> Enabled gravity compensation for {len(bodies)} bodies.")
+		print_debug(f"-> Enabled gravity compensation for {len(bodies)} bodies.")
 
 def post_process_set_joint_armature(root, armature_value):
 	"""Set 'armature' for all joints."""
@@ -592,7 +591,7 @@ def post_process_set_joint_armature(root, armature_value):
 		joints = worldbody.findall(".//joint")
 		for joint in joints:
 			joint.set("armature", str(armature_value))
-		print_base(f"-> Set armature to '{armature_value}' for {len(joints)} joints.")
+		print_debug(f"-> Set armature to '{armature_value}' for {len(joints)} joints.")
 
 def post_process_set_simulation_options(root, solver=None, integrator=None):
 	"""Set <option> solver/integrator."""
@@ -609,7 +608,7 @@ def post_process_set_simulation_options(root, solver=None, integrator=None):
 		option_node.set("integrator", integrator)
 		options_set.append(f"integrator='{integrator}'")
 	if options_set:
-		print_base(f"-> Set simulation options: {', '.join(options_set)}")
+		print_debug(f"-> Set simulation options: {', '.join(options_set)}")
 
 
 def post_process_add_actuators(root, default_ros2_control_instance, mimic_joints=None, add_ros_plugins=False, default_actuator_gains= {"kp" : 500.0, "kv" : 1.0}, ros2c_joint_map=None, force_actuator_tags=True):
@@ -627,7 +626,7 @@ def post_process_add_actuators(root, default_ros2_control_instance, mimic_joints
 
 	# Require ros2_control joints map
 	if not ros2c_joint_map:
-		print_base("-> No ros2_control joints found; skipping actuator generation.")
+		print_debug("-> No ros2_control joints found; skipping actuator generation.")
 		return
 	all_joints = worldbody.findall(".//joint")
 	actuatable_joints = [j for j in all_joints if j.get("type") != "free"]
@@ -637,7 +636,7 @@ def post_process_add_actuators(root, default_ros2_control_instance, mimic_joints
 	actuatable_joints = [j for j in actuatable_joints if j.get("name") in names_set]
 
 	if not actuatable_joints:
-		print_base("-> No actuatable joints found to create actuators for.")
+		print_debug("-> No actuatable joints found to create actuators for.")
 		return
 
 	actuator_node = root.find("actuator")
@@ -663,7 +662,7 @@ def post_process_add_actuators(root, default_ros2_control_instance, mimic_joints
 			actuator_command_plugin.append(
 				ET.Element("instance", {"name": default_ros2_control_instance})
 			)
-			print_base("-> Added 'MujocoRosUtils::ActuatorCommand' extension plugin.")
+			print_debug("-> Added 'MujocoRosUtils::ActuatorCommand' extension plugin.")
 
 	joint_names = []
 	plugin_joint_names = []
@@ -676,14 +675,14 @@ def post_process_add_actuators(root, default_ros2_control_instance, mimic_joints
 
 		# Determine which actuator types to create from ros2_control interfaces
 		ifaces = set(ros2c_joint_map.get(joint_name, set()))
-		print_base(f"-> Processing joint '{joint_name}' with ros2_control interfaces: {', '.join(ifaces) if ifaces else 'none'}")
+		print_debug(f"-> Processing joint '{joint_name}' with ros2_control interfaces: {', '.join(ifaces) if ifaces else 'none'}")
 		tags_to_add = []
 		if any(iface in ["position", "position_pid"] for iface in ifaces):
 			tags_to_add.append("position")
 		if any(iface in ["velocity", "velocity_pid"] for iface in ifaces):
 			tags_to_add.append("velocity")
 		if not tags_to_add:
-			print_base(f"-> No supported ros2_control interfaces found for joint: {joint_name}; skipping actuator creation.")
+			print_debug(f"-> No supported ros2_control interfaces found for joint: {joint_name}; skipping actuator creation.")
 			continue
 
 		# Use unique actuator names if multiple interfaces per joint
@@ -703,7 +702,7 @@ def post_process_add_actuators(root, default_ros2_control_instance, mimic_joints
 				if key == "dampratio" and actuator_attrs.get("kv", 0) != 0:
 					actuator_attrs.pop("kv")
 				actuator_attrs[key] = str(default_actuator_gains[key])
-				print_base(f"Setting actuator attribute '{key}' to '{default_actuator_gains[key]}' for actuator '{act_name}'")
+				print_debug(f"Setting actuator attribute '{key}' to '{default_actuator_gains[key]}' for actuator '{act_name}'")
 
 			# ctrlrange from joint range
 			if "range" in joint.attrib:
@@ -715,7 +714,7 @@ def post_process_add_actuators(root, default_ros2_control_instance, mimic_joints
 				actuator_attrs["forcerange"] = joint.get("actuatorfrcrange")
 
 			ET.SubElement(actuator_node, tag, actuator_attrs)
-			print_base(f"-> Added '{tag}' actuator for joint: {joint_name}")
+			print_debug(f"-> Added '{tag}' actuator for joint: {joint_name}")
 
 		joint_names.append(joint_name)
 
@@ -730,12 +729,12 @@ def post_process_add_actuators(root, default_ros2_control_instance, mimic_joints
 				},
 			)
 			plugin_joint_names.append(joint_name)
-			print_base(f"-> Added ROS plugin actuators for joint: {joint_name}")
+			print_debug(f"-> Added ROS plugin actuators for joint: {joint_name}")
 
 	if joint_names:
-		print_base(f"-> Added actuators for joints: {', '.join(joint_names)}")
+		print_debug(f"-> Added actuators for joints: {', '.join(joint_names)}")
 	if plugin_joint_names:
-		print_base(f"-> Added ROS plugin actuators for joints: {', '.join(plugin_joint_names)}")
+		print_debug(f"-> Added ROS plugin actuators for joints: {', '.join(plugin_joint_names)}")
 
 def post_process_add_mimic_plugins(root, mimic_joints, default_actuator_gains):
 	"""Add MimicJoint plugins and ensure a position actuator exists for each mimic joint."""
@@ -751,7 +750,7 @@ def post_process_add_mimic_plugins(root, mimic_joints, default_actuator_gains):
 		ET.SubElement(
 			extension_node, "plugin", {"plugin": "MujocoRosUtils::MimicJoint"}
 		)
-		print_base("-> Added 'MujocoRosUtils::MimicJoint' extension plugin.")
+		print_debug("-> Added 'MujocoRosUtils::MimicJoint' extension plugin.")
 
 	# Ensure <actuator> block exists (mimic requires a controllable actuator on the follower joint)
 	actuator_node = root.find("actuator")
@@ -803,7 +802,7 @@ def post_process_add_mimic_plugins(root, mimic_joints, default_actuator_gains):
 			ET.SubElement(actuator_node, "position", attr)
 			existing_actuator_names.add(candidate)
 			created_position_actuators.append(joint_name)
-			print_base(f"-> Added 'position' actuator for mimic joint: '{joint_name}'.")
+			print_debug(f"-> Added 'position' actuator for mimic joint: '{joint_name}'.")
 
 		# Add the MimicJoint plugin entry under <actuator>
 		plugin_node = ET.SubElement(
@@ -833,9 +832,9 @@ def post_process_add_mimic_plugins(root, mimic_joints, default_actuator_gains):
 		mimic_plugin_joint_names.append(joint_name)
 
 	if created_position_actuators:
-		print_base(f"-> Created missing position actuators for mimic joints: {', '.join(created_position_actuators)}")
+		print_debug(f"-> Created missing position actuators for mimic joints: {', '.join(created_position_actuators)}")
 	if mimic_plugin_joint_names:
-		print_base(f"-> Added ROS mimic joint plugins for joints: {', '.join(mimic_plugin_joint_names)}")
+		print_debug(f"-> Added ROS mimic joint plugins for joints: {', '.join(mimic_plugin_joint_names)}")
 
 def post_process_add_materials(root, material_info, mesh_dir="assets/"):
 	"""Add material definitions to MJCF based on extracted mesh material information.
@@ -856,7 +855,7 @@ def post_process_add_materials(root, material_info, mesh_dir="assets/"):
 		mesh_dir: Directory where meshes are stored (for matching mesh names to geoms)
 	"""
 	if not material_info:
-		print_base("-> No material information to add to MJCF.")
+		print_debug("-> No material information to add to MJCF.")
 		return
 	
 	# Find or create <asset> section
@@ -937,6 +936,6 @@ def post_process_add_materials(root, material_info, mesh_dir="assets/"):
 		else:
 			print_warning("-> Warning: Materials were created but no geoms were assigned (mesh name matching may have failed)")
 	else:
-		print_base("-> No materials added (no valid RGBA data found in visual meshes)")
+		print_debug("-> No materials added (no valid RGBA data found in visual meshes)")
 
 

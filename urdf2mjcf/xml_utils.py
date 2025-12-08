@@ -1,6 +1,6 @@
 import fnmatch
 import xml.etree.ElementTree as ET
-from _utils import print_base, print_info, print_warning
+from _utils import print_debug, print_info, print_warning
 
 def ensure_extension_node(root):
 	"""Ensure <extension> exists. Insert after <compiler>, else before <worldbody>, else append."""
@@ -83,10 +83,10 @@ def find_matching_elements_with_wildcards(root, elem):
 			# Log the successful match with more detail
 			candidate_attrs = ", ".join([f"{k}='{v}'" for k, v in candidate.attrib.items()])
 			pattern_attrs = ", ".join([f"{k}='{v}'" for k, v in target_attrs.items()])
-			print_base(f"Matched pattern <{tag} {pattern_attrs}> with wildcard found: <{tag} {candidate_attrs}>")
+			print_debug(f"Matched pattern <{tag} {pattern_attrs}> with wildcard found: <{tag} {candidate_attrs}>")
 	
 	if matching_nodes:
-		print_info(f"Found {len(matching_nodes)} matching elements for pattern <{tag} {', '.join([f'{k}={v}' for k, v in target_attrs.items()])}>")
+		print_debug(f"Found {len(matching_nodes)} matching elements for pattern <{tag} {', '.join([f'{k}={v}' for k, v in target_attrs.items()])}>")
 	else:
 		pattern_attrs = ", ".join([f"{k}='{v}'" for k, v in target_attrs.items()])
 		print_warning(f"No matching elements found for pattern <{tag} {pattern_attrs}>")

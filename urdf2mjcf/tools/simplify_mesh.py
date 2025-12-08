@@ -3,10 +3,19 @@
 import os
 import pymeshlab as ml
 import argparse
+from _utils import print_debug, print_error, print_warning, print_confirm
 
-def simplify_mesh(input_file, output_file, target_reduction=None, target_faces=None, translate=None, scale_factor=None):
+
+def simplify_mesh(
+    input_file,
+    output_file,
+    target_reduction=None,
+    target_faces=None,
+    translate=None,
+    scale_factor=None,
+):
     """Simplifies a single mesh file.
-    
+
     Args:
         input_file: Path to input mesh
         output_file: Path to output mesh
@@ -15,13 +24,13 @@ def simplify_mesh(input_file, output_file, target_reduction=None, target_faces=N
         translate: Translation vector [x, y, z]
         scale_factor: Uniform scale factor
     """
-    print(f"Processing: {input_file}")
+    print_debug(f"Processing: {input_file}")
     try:
         ms = ml.MeshSet()
         ms.load_new_mesh(input_file)
-        
+
         if translate:
-            print(f"Translating mesh by: {translate}")
+            print_debug(f"Translating mesh by: {translate}")
             ms.apply_filter(
                 "compute_matrix_from_translation",
                 axisx=translate[0],
@@ -31,7 +40,7 @@ def simplify_mesh(input_file, output_file, target_reduction=None, target_faces=N
             )
 
         if scale_factor:
-            print(f"Scaling mesh by factor: {scale_factor}")
+            print_debug(f"Scaling mesh by factor: {scale_factor}")
             ms.apply_filter(
                 "compute_matrix_from_scaling_or_normalization",
                 axisx=scale_factor,
@@ -43,24 +52,30 @@ def simplify_mesh(input_file, output_file, target_reduction=None, target_faces=N
 
         # Determine simplification parameters
         current_faces = ms.current_mesh().face_number()
-        print(f"Current mesh has {current_faces} faces")
-        
+        print_debug(f"Current mesh '{input_file}' has {current_faces} faces")
+
         if target_faces is not None:
             # User specified target number of faces
             if target_faces >= current_faces:
-                print(f"Target faces ({target_faces}) >= current faces ({current_faces}), skipping simplification")
+                print_debug(
+                    f"Target faces ({target_faces}) >= current faces ({current_faces}), skipping simplification"
+                )
                 target_percentage = 1.0
             else:
                 target_percentage = target_faces / current_faces
-                print(f"Simplifying mesh to {target_faces} faces (keeping {target_percentage*100:.1f}% of faces)")
+                print_debug(
+                    f"Simplifying mesh to {target_faces} faces (keeping {target_percentage * 100:.1f}% of faces)"
+                )
         elif target_reduction is not None:
             # User specified reduction ratio (percentage to remove)
             target_percentage = 1.0 - target_reduction
             target_face_count = int(current_faces * target_percentage)
-            print(f"Simplifying mesh with reduction: {target_reduction} (keeping {target_percentage*100:.1f}%, target ~{target_face_count} faces)")
+            print_debug(
+                f"Simplifying mesh with reduction: {target_reduction} (keeping {target_percentage * 100:.1f}%, target ~{target_face_count} faces)"
+            )
         else:
             # Default: no reduction
-            print("No reduction specified, keeping original mesh")
+            print_warning("No reduction specified, keeping original mesh")
             target_percentage = 1.0
 
         if target_percentage < 1.0:
@@ -70,19 +85,21 @@ def simplify_mesh(input_file, output_file, target_reduction=None, target_faces=N
                 preservenormal=True,
             )
             final_faces = ms.current_mesh().face_number()
-            print(f"Simplified mesh has {final_faces} faces")
+            print_debug(f"Simplified mesh has {final_faces} faces")
         # Ensure output directory exists
         output_dir = os.path.dirname(output_file)
         if output_dir:
             os.makedirs(output_dir, exist_ok=True)
 
         ms.save_current_mesh(output_file)
-        print(f"Saved processed mesh to: {output_file}")
+        print_debug(f"Saved processed mesh to: {output_file}")
     except ml.PyMeshLabException as e:
-        print(f"PyMeshLab error processing {input_file}: {e}:\n{ml.print_filter_list()}")
-        raise 
+        print_error(
+            f"PyMeshLab error processing {input_file}: {e}:\n{ml.print_filter_list()}"
+        )
+        raise
     except Exception as e:
-        print(f"Failed to process {input_file}: {e}")
+        print_error(f"Failed to process {input_file}: {e}")
         raise
 
 
@@ -137,16 +154,20 @@ def main():
 
     # Validate that only one simplification method is specified
     if reduction is not None and target_faces is not None:
-        print("Error: Cannot specify both --reduction and --target-faces. Choose one.")
+        print_error(
+            "Error: Cannot specify both --reduction and --target-faces. Choose one."
+        )
         return
-    
+
     # Default to 50% reduction if neither is specified
     if reduction is None and target_faces is None:
         reduction = 0.5
-        print(f"No simplification method specified, using default reduction of {reduction} (50%)")
+        print_warning(
+            f"No simplification method specified, using default reduction of {reduction} (50%)"
+        )
 
     if not os.path.exists(input_path):
-        print(f"Error: Input path '{input_path}' does not exist.")
+        print_error(f"Error: Input path '{input_path}' does not exist.")
         return
 
     if os.path.isdir(input_path):
@@ -158,12 +179,19 @@ def main():
             if filename.lower().endswith(".stl"):
                 input_file = os.path.join(input_path, filename)
                 output_file = os.path.join(output_path, filename)
-                simplify_mesh(input_file, output_file, reduction, target_faces, translate, scale_factor)
-        print("All STL files in directory processed.")
+                simplify_mesh(
+                    input_file,
+                    output_file,
+                    reduction,
+                    target_faces,
+                    translate,
+                    scale_factor,
+                )
+        print_debug("All STL files in directory processed.")
     elif os.path.isfile(input_path):
         # Input is a file
         if not input_path.lower().endswith(".stl"):
-            print(f"Error: Input file '{input_path}' is not an STL file.")
+            print_error(f"Error: Input file '{input_path}' is not an STL file.")
             return
 
         final_output_path = output_path
@@ -174,10 +202,19 @@ def main():
             # If output is a directory, save with same filename inside it
             final_output_path = os.path.join(output_path, os.path.basename(input_path))
 
-        simplify_mesh(input_path, final_output_path, reduction, target_faces, translate, scale_factor)
-        print("STL file processed.")
+        simplify_mesh(
+            input_path,
+            final_output_path,
+            reduction,
+            target_faces,
+            translate,
+            scale_factor,
+        )
+        print_confirm("STL file processed.")
     else:
-        print(f"Error: Input path '{input_path}' is not a valid file or directory.")
+        print_error(
+            f"Error: Input path '{input_path}' is not a valid file or directory."
+        )
 
 
 if __name__ == "__main__":

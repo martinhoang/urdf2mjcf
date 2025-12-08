@@ -4,7 +4,7 @@ import os
 import subprocess
 import sys
 import venv
-from _utils import print_base, print_error, print_info
+from _utils import print_info, print_error, print_info
 
 
 def setup_mujoco_venv():
@@ -47,14 +47,14 @@ def setup_mujoco_venv():
             )
 
         # Not in venv and mujoco not found globally. Let's set it up.
-        print_base("--- MuJoCo Dependency Setup ---")
-        print_base(
+        print_info("--- MuJoCo Dependency Setup ---")
+        print_info(
             "Python package 'mujoco' not found. Setting up a local virtual environment."
         )
 
         # 1. Create venv if it doesn't exist
         if not os.path.isdir(venv_dir):
-            print_base(f"Creating virtual environment in '{venv_dir}'...")
+            print_info(f"Creating virtual environment in '{venv_dir}'...")
             try:
                 venv.create(venv_dir, with_pip=True)
             except Exception as e:
@@ -70,7 +70,7 @@ def setup_mujoco_venv():
             python_exe = os.path.join(venv_dir, "bin", "python")
 
         # 3. Install mujoco
-        print_base("Installing 'mujoco' package...")
+        print_info("Installing 'mujoco' package...")
         try:
             subprocess.check_call([pip_exe, "install", "mujoco"])
         except subprocess.CalledProcessError as e:
@@ -79,7 +79,7 @@ def setup_mujoco_venv():
 
         # 4. Relaunch script with the venv's python
         print_info("Installation successful. Relaunching script...")
-        print_base("---------------------------------\n")
+        print_info("---------------------------------\n")
         os.execv(python_exe, [python_exe] + sys.argv)
 
 
