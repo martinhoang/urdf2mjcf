@@ -453,7 +453,7 @@ def copy_mesh_files(
                     Note: Only visual meshes have material info. Collision meshes don't need materials.
                     inertia_data: Calculated inertia data for links
     """
-    print_info("Copying mesh files...")
+    print_debug("Copying mesh files...")
     if not absolute_mesh_paths:
         print_warning("-> No meshes to copy.")
         return {}, {}
@@ -792,7 +792,7 @@ def copy_mesh_files(
         max_workers = min(len(absolute_mesh_paths), os.cpu_count() or 4)
 
     if max_workers > 1 and len(absolute_mesh_paths) > 1:
-        print_info(f"Processing meshes with {max_workers} parallel workers...")
+        print_debug(f"Processing meshes with {max_workers} parallel workers...")
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             # Submit all link processing tasks
             futures = {

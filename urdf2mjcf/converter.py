@@ -71,9 +71,9 @@ class URDFToMJCFConverter:
         live.start()
         try:
             # Step 1: Resolve input and output paths
-            print_info("\n" + "=" * 100)
-            print_info("STEP 1: RESOLVING PATHS")
-            print_info("=" * 100)
+            print_debug("\n" + "=" * 100)
+            print_debug("STEP 1: RESOLVING PATHS")
+            print_debug("=" * 100)
             progress.update(task, description="[cyan]Resolving paths...")
             input_path = urdf_preprocess.resolve_path(args.input)
             if not input_path or not os.path.exists(input_path):
@@ -117,9 +117,9 @@ class URDFToMJCFConverter:
             urdf_to_process = input_path
 
             # Step 2: XACRO pre-processing
-            print_info("\n" + "=" * 100)
-            print_info("STEP 2: XACRO PROCESSING")
-            print_info("=" * 100)
+            print_debug("\n" + "=" * 100)
+            print_debug("STEP 2: XACRO PROCESSING")
+            print_debug("=" * 100)
             progress.update(task, description="[cyan]Processing XACRO...")
             if input_path.endswith(".xacro"):
                 print_debug(f"Input file '{base_name}' is a xacro file.")
@@ -163,9 +163,9 @@ class URDFToMJCFConverter:
             urdf_plugins = []
 
             # Step 3: Pre-process URDF
-            print_info("\n" + "=" * 100)
-            print_info("STEP 3: PREPROCESSING URDF")
-            print_info("=" * 100)
+            print_debug("\n" + "=" * 100)
+            print_debug("STEP 3: PREPROCESSING URDF")
+            print_debug("=" * 100)
             progress.update(task, description="[cyan]Preprocessing URDF...")
             tracking_progress.append({"name": "Pre-process URDF"})
             (
@@ -187,9 +187,9 @@ class URDFToMJCFConverter:
             progress.update(task, advance=1)
 
             # Step 4: Convert & Copy Meshes
-            print_info("\n" + "=" * 100)
-            print_info("STEP 4: PROCESSING MESHES")
-            print_info("=" * 100)
+            print_debug("\n" + "=" * 100)
+            print_debug("STEP 4: PROCESSING MESHES")
+            print_debug("=" * 100)
             progress.update(task, description="[cyan]Processing meshes...")
             tracking_progress.append({"name": "Convert & Copy Meshes"})
             if not args.no_copy_meshes:
@@ -288,9 +288,9 @@ class URDFToMJCFConverter:
             progress.update(task, advance=1)
 
             # Step 5: Validate mesh face counts before MuJoCo import
-            print_info("\n" + "=" * 100)
-            print_info("STEP 5: VALIDATING MESHES")
-            print_info("=" * 100)
+            print_debug("\n" + "=" * 100)
+            print_debug("STEP 5: VALIDATING MESHES")
+            print_debug("=" * 100)
             progress.update(task, description="[cyan]Validating meshes...")
             if args.validate_mesh_faces:
                 tracking_progress.append({"name": "Validate Mesh Face Counts"})
@@ -342,9 +342,9 @@ class URDFToMJCFConverter:
             progress.update(task, advance=1)
 
             # Step 6: Save preprocessed URDF
-            print_info("\n" + "=" * 100)
-            print_info("STEP 6: SAVING PRE-PROCESSED URDF")
-            print_info("=" * 100)
+            print_debug("\n" + "=" * 100)
+            print_debug("STEP 6: SAVING PRE-PROCESSED URDF")
+            print_debug("=" * 100)
             progress.update(task, description="[cyan]Saving preprocessed URDF...")
             ET.indent(modified_urdf_tree, space="\t")
             # Write the modified/preprocessed URDF to a distinct file
@@ -355,9 +355,9 @@ class URDFToMJCFConverter:
             progress.update(task, advance=1)
 
             # Step 7: Import URDF to MuJoCo
-            print_info("\n" + "=" * 100)
-            print_info("STEP 7: IMPORTING TO MUJOCO")
-            print_info("=" * 100)
+            print_debug("\n" + "=" * 100)
+            print_debug("STEP 7: IMPORTING TO MUJOCO")
+            print_debug("=" * 100)
             progress.update(task, description="[cyan]Importing to MuJoCo...")
             tracking_progress.append({"name": "Import URDF to Mujoco"})
             model = mujoco.MjModel.from_xml_path(preprocessed_urdf_path)
@@ -400,9 +400,9 @@ class URDFToMJCFConverter:
             return
 
         # Step 8: Post-processing MJCF
-        print_info("\n" + "=" * 100)
-        print_info("STEP 8: POST-PROCESSING MJCF")
-        print_info("=" * 100)
+        print_debug("\n" + "=" * 100)
+        print_debug("STEP 8: POST-PROCESSING MJCF")
+        print_debug("=" * 100)
         progress.update(task, description="[cyan]Post-processing MJCF...")
         print_confirm(
             "-> Loaded URDF to MJCF successfully. Applying post-processing MJCF..."
@@ -484,10 +484,10 @@ class URDFToMJCFConverter:
             live.stop()
             clear_rich_console()
 
-            print_info("\n" + "=" * 100)
-            print_info("CONVERSION COMPLETED SUCCESSFULLY")
-            print_info("=" * 100)
-            print_info(f"Output saved to: {output_path}")
+            print_debug("\n" + "=" * 100)
+            print_debug("CONVERSION COMPLETED SUCCESSFULLY")
+            print_debug("=" * 100)
+            print_debug(f"Output saved to: {output_path}")
             print_warning(
                 "REMEMBER TO BUILD THE PACKAGE SO THE ASSET FILES ARE COPIED OR LINKED!"
             )
