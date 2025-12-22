@@ -317,7 +317,12 @@ def post_process_inject_custom_mujoco_elements(root, elements):
 		
 		if has_children_with_operations:
 			# Find matching parent element to provide context for children
-			matching_parents = xml_utils.find_matching_elements(root, elem)
+			# If the element has no attributes, match by tag name only
+			if not elem.attrib:
+				# No attributes - match any element with this tag name
+				matching_parents = root.findall(f".//{elem.tag}")
+			else:
+				matching_parents = xml_utils.find_matching_elements(root, elem)
 			
 			if matching_parents:
 				for parent_node in matching_parents:
@@ -712,6 +717,14 @@ def post_process_add_actuators(root, default_ros2_control_instance, mimic_joints
 			if "actuatorfrcrange" in joint.attrib:
 				actuator_attrs["forcelimited"] = "true"
 				actuator_attrs["forcerange"] = joint.get("actuatorfrcrange")
+    
+			if "position" in tag:
+				actuator_attrs["group"] = "0"
+			elif "velocity" in tag:
+				actuator_attrs["group"] = "1"
+			else:
+				actuator_attrs["group"] = "2" 
+
 
 			ET.SubElement(actuator_node, tag, actuator_attrs)
 			print_debug(f"-> Added '{tag}' actuator for joint: {joint_name}")

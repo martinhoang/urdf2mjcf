@@ -2,6 +2,8 @@ import argparse
 import json
 import os
 import sys
+import subprocess
+import shutil
 
 from .converter import URDFToMJCFConverter
 from _utils import (
@@ -366,4 +368,36 @@ def main():
     set_log_level(args.log_level, args.traceback)
 
     converter = URDFToMJCFConverter(args)
-    return converter.convert()
+    
+    # Run conversion and capture result
+    try:
+        result = converter.convert()
+        success = True
+        error_msg = None
+    except Exception as e:
+        success = False
+        error_msg = str(e)
+        result = None
+        raise  # Re-raise to maintain original error handling
+    finally:
+        # Send desktop notification if notify-send is available
+        if shutil.which("notify-send"):
+            input_name = os.path.basename(args.input)
+            if success:
+                subprocess.run([
+                    "notify-send",
+                    "URDF to MJCF Conversion Complete",
+                    f"Successfully converted: {input_name}",
+                    "-i", "dialog-information",
+                    "-u", "normal"
+                ], check=False)
+            else:
+                subprocess.run([
+                    "notify-send",
+                    "URDF to MJCF Conversion Failed",
+                    f"Error converting {input_name}: {error_msg or 'Unknown error'}",
+                    "-i", "dialog-error",
+                    "-u", "critical"
+                ], check=False)
+    
+    return result
