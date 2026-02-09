@@ -116,12 +116,12 @@ def print_info(message):
 
 def print_warning(message):
     """Prints a warning message in yellow."""
-    print_base(f"[WARNING] {message}", logging.WARNING, TerminalColor.YELLOW)
+    print_base(f"[WARN] {message}", logging.WARNING, TerminalColor.YELLOW)
 
 
 def print_debug(message):
     """Prints a debug message in blue."""
-    print_base(f"[DEBUG] {message}", logging.DEBUG, TerminalColor.BLUE)
+    print_base(f"[DEBG] {message}", logging.DEBUG, TerminalColor.BLUE)
 
 
 def print_error(message, exc_info=None):
@@ -134,7 +134,7 @@ def print_error(message, exc_info=None):
                                                 If an Exception object is passed, its traceback is printed.
                                                 Defaults to None.
     """
-    print_base(f"[ERROR] {message}", logging.ERROR, TerminalColor.RED)
+    print_base(f"[ERRO] {message}", logging.ERROR, TerminalColor.RED)
 
     # Determine if a traceback should be shown.
     # This can be triggered by the global flag or by passing exc_info.
