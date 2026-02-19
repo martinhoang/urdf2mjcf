@@ -5,6 +5,7 @@ import sys
 import subprocess
 import shutil
 
+from . import __version__
 from .converter import URDFToMJCFConverter
 from _utils import (
     set_log_level,
@@ -67,6 +68,15 @@ def main():
     parser = argparse.ArgumentParser(
         description="Convert a URDF file to a MuJoCo MJCF (XML) file using the <compiler> tag method.",
         formatter_class=argparse.RawTextHelpFormatter,
+    )
+
+    # Add version argument
+    parser.add_argument(
+        "-v",
+        "--version",
+        action="version",
+        version=f"urdf2mjcf {__version__}",
+        help="Show the version number and exit.",
     )
 
     # Add an argument for the config file
