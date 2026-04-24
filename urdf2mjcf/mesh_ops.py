@@ -476,7 +476,7 @@ def copy_mesh_files(
 
     if generate_collision and not GENERATE_COLLISION_AVAILABLE:
         print_warning(
-            "Collision mesh generation requested but open3d library not available. Install with: pip install open3d"
+            "Collision mesh generation requested but the required libraries are not available."
         )
 
     if simplify_meshes and not SIMPLIFY_MESH_TOOL_AVAILABLE:

@@ -3,7 +3,7 @@
 import argparse
 import glob
 import os
-import open3d as o3d
+import trimesh
 from multiprocessing import Pool, cpu_count
 from functools import partial
 import numpy as np
@@ -11,12 +11,10 @@ import numpy as np
 # Try to import CoACD for advanced convex decomposition
 try:
     import coacd
-    import trimesh
     COACD_AVAILABLE = True
 except ImportError:
     COACD_AVAILABLE = False
     coacd = None
-    trimesh = None
 
 # Try to import tqdm for progress bar
 try:
@@ -79,19 +77,13 @@ def process_mesh_coacd(mesh_path, outdirpath, threshold=0.05, max_convex_hull=-1
         
         # Visualization (only in single-threaded mode)
         if visualize:
-            geometries = []
-            for i, part in enumerate(parts):
-                # Convert to Open3D mesh for visualization
-                o3d_mesh = o3d.geometry.TriangleMesh()
+            meshes = []
+            for part in parts:
                 if isinstance(part, trimesh.Trimesh):
-                    o3d_mesh.vertices = o3d.utility.Vector3dVector(part.vertices)
-                    o3d_mesh.triangles = o3d.utility.Vector3iVector(part.faces)
+                    meshes.append(part)
                 else:
-                    o3d_mesh.vertices = o3d.utility.Vector3dVector(part[0])
-                    o3d_mesh.triangles = o3d.utility.Vector3iVector(part[1])
-                o3d_mesh.compute_vertex_normals()
-                geometries.append(o3d_mesh)
-            o3d.visualization.draw_geometries(geometries)
+                    meshes.append(trimesh.Trimesh(vertices=part[0], faces=part[1]))
+            trimesh.Scene(meshes).show()
         
         # Save output
         base_name = os.path.splitext(os.path.basename(mesh_path))[0]
@@ -158,7 +150,7 @@ def process_mesh_convex_hull(mesh_path, outdirpath, num_points=5000, visualize=F
     Args:
         mesh_path: Path to input mesh file (STL, OBJ, PLY, OFF, etc.)
         outdirpath: Output directory path
-        num_points: Number of points to sample for convex hull generation
+        num_points: Unused; kept for API compatibility.
         visualize: Whether to show visualization (disabled for parallel processing)
         verbose: Whether to print verbose output
     
@@ -167,34 +159,31 @@ def process_mesh_convex_hull(mesh_path, outdirpath, num_points=5000, visualize=F
     """
     if verbose:
         print(f"Processing {os.path.basename(mesh_path)} with convex hull")
-    
+
     try:
-        # Read and process mesh
-        mesh = o3d.io.read_triangle_mesh(mesh_path)
-        mesh.compute_vertex_normals()
-        
-        # Generate point cloud and convex hull
-        pcl = mesh.sample_points_poisson_disk(number_of_points=num_points)
-        hull, _ = pcl.compute_convex_hull()
-        hull.orient_triangles()
-        
-        # Visualization (only in single-threaded mode)
+        mesh = trimesh.load(mesh_path, force="mesh")
+        # Compute convex hull from all vertices to guarantee the true maximal hull.
+        # (Sampling-based approaches can miss extremal vertices in small triangles.)
+        hull = mesh.convex_hull
+
         if visualize:
-            o3d.visualization.draw_geometries([hull])
-        
-        hull.compute_vertex_normals()
-        
-        # Write output
+            hull.show()
+
         output_path = os.path.join(outdirpath, os.path.basename(mesh_path))
-        o3d.io.write_triangle_mesh(output_path, hull)
-        
+        hull.export(output_path)
+
         if verbose:
             print(f"Completed {os.path.basename(mesh_path)}")
         return True
-        
+
     except Exception as e:
         print(f"Error processing {os.path.basename(mesh_path)}: {str(e)}")
         return False
+
+
+def process_mesh(mesh_path, outdirpath, visualize=False, verbose=False):
+    """Generate a collision mesh using the convex hull method (default for pipeline use)."""
+    return process_mesh_convex_hull(mesh_path, outdirpath, visualize=visualize, verbose=verbose)
 
 
 def main():
