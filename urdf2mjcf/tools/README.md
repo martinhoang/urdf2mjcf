@@ -37,10 +37,10 @@ This script generates simplified convex hull collision meshes from visual meshes
 
 ### Dependencies
 
-This script requires the `open3d` library.
+This script requires the `trimesh` library (installed as part of the main package).
 
 ```bash
-pip install open3d
+pip install trimesh[easy]
 ```
 
 ### Usage

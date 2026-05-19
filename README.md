@@ -269,9 +269,8 @@ urdf2mjcf robot.urdf.xacro \
 
 - Python ≥ 3.8
 - MuJoCo ≥ 3.0
-- trimesh (for inertia calculation): `pip install trimesh[easy]`
+- trimesh (for inertia calculation and collision generation): `pip install trimesh[easy]`
 - pymeshlab (for mesh simplification): `pip install pymeshlab`
-- open3d (for collision generation): `pip install open3d`
 - ament-index-python (for ROS2): `pip install ament-index-python`
 
 ## License

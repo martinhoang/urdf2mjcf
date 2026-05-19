@@ -3,7 +3,7 @@
 import argparse
 import glob
 import os
-import open3d as o3d
+import trimesh
 from multiprocessing import Pool, cpu_count
 from functools import partial
 import numpy as np
@@ -11,12 +11,10 @@ import numpy as np
 # Try to import CoACD for advanced convex decomposition
 try:
     import coacd
-    import trimesh
     COACD_AVAILABLE = True
 except ImportError:
     COACD_AVAILABLE = False
     coacd = None
-    trimesh = None
 
 # Try to import tqdm for progress bar
 try:
@@ -79,19 +77,13 @@ def process_mesh_coacd(mesh_path, outdirpath, threshold=0.05, max_convex_hull=-1
         
         # Visualization (only in single-threaded mode)
         if visualize:
-            geometries = []
-            for i, part in enumerate(parts):
-                # Convert to Open3D mesh for visualization
-                o3d_mesh = o3d.geometry.TriangleMesh()
+            meshes = []
+            for part in parts:
                 if isinstance(part, trimesh.Trimesh):
-                    o3d_mesh.vertices = o3d.utility.Vector3dVector(part.vertices)
-                    o3d_mesh.triangles = o3d.utility.Vector3iVector(part.faces)
+                    meshes.append(part)
                 else:
-                    o3d_mesh.vertices = o3d.utility.Vector3dVector(part[0])
-                    o3d_mesh.triangles = o3d.utility.Vector3iVector(part[1])
-                o3d_mesh.compute_vertex_normals()
-                geometries.append(o3d_mesh)
-            o3d.visualization.draw_geometries(geometries)
+                    meshes.append(trimesh.Trimesh(vertices=part[0], faces=part[1]))
+            trimesh.Scene(meshes).show()
         
         # Save output
         base_name = os.path.splitext(os.path.basename(mesh_path))[0]
@@ -153,48 +145,61 @@ def process_mesh_coacd(mesh_path, outdirpath, threshold=0.05, max_convex_hull=-1
 def process_mesh_convex_hull(mesh_path, outdirpath, num_points=5000, visualize=False, verbose=False):
     """
     Process a single mesh file to generate collision mesh using simple convex hull.
-    This is the original method - fast but produces a single convex approximation.
-    
+    This is the fast method - produces a single convex approximation.
+
     Args:
         mesh_path: Path to input mesh file (STL, OBJ, PLY, OFF, etc.)
         outdirpath: Output directory path
-        num_points: Number of points to sample for convex hull generation
+        num_points: Number of surface points to sample before hull computation.
+                    Applied only when the mesh has more vertices than this count,
+                    which mirrors the original point-cloud hull approach and keeps
+                    computation fast on dense visual meshes.
         visualize: Whether to show visualization (disabled for parallel processing)
         verbose: Whether to print verbose output
-    
+
     Returns:
         True if successful, False otherwise
     """
     if verbose:
         print(f"Processing {os.path.basename(mesh_path)} with convex hull")
-    
+
     try:
-        # Read and process mesh
-        mesh = o3d.io.read_triangle_mesh(mesh_path)
-        mesh.compute_vertex_normals()
-        
-        # Generate point cloud and convex hull
-        pcl = mesh.sample_points_poisson_disk(number_of_points=num_points)
-        hull, _ = pcl.compute_convex_hull()
-        hull.orient_triangles()
-        
+        mesh = trimesh.load(mesh_path, force="mesh")
+
+        # Sample surface points for hull computation to match original behavior
+        # and keep computation fast on dense visual meshes.
+        if num_points > 0 and len(mesh.vertices) > num_points:
+            pts, _ = trimesh.sample.sample_surface_even(mesh, num_points)
+            hull = trimesh.PointCloud(pts).convex_hull
+        else:
+            hull = mesh.convex_hull
+
         # Visualization (only in single-threaded mode)
         if visualize:
-            o3d.visualization.draw_geometries([hull])
-        
-        hull.compute_vertex_normals()
-        
-        # Write output
+            hull.show()
+
         output_path = os.path.join(outdirpath, os.path.basename(mesh_path))
-        o3d.io.write_triangle_mesh(output_path, hull)
-        
+        hull.export(output_path)
+
         if verbose:
             print(f"Completed {os.path.basename(mesh_path)}")
         return True
-        
+
     except Exception as e:
         print(f"Error processing {os.path.basename(mesh_path)}: {str(e)}")
         return False
+
+
+def process_mesh(mesh_path, outdirpath, visualize=False, verbose=False):
+    """
+    Default entry point: generate a convex hull collision mesh.
+
+    This is the function imported by mesh_ops.py via
+    ``from urdf2mjcf.tools.generate_collision_mesh import process_mesh``.
+    """
+    return process_mesh_convex_hull(
+        mesh_path, outdirpath, visualize=visualize, verbose=verbose
+    )
 
 
 def main():
@@ -217,32 +222,29 @@ Examples:
   # Process a single mesh file
   %(prog)s /path/to/mesh/robot.stl
 
+  # Process multiple files via shell glob
+  %(prog)s *.stl
+
   # Use CoACD for better collision approximation
   %(prog)s /path/to/meshes -m coacd
 
   # Customize CoACD threshold and max hulls
-  %(prog)s /path/to/meshes -m coacd -t 0.03 -c 32
-  
-  # Process single file with custom output
-  %(prog)s robot.obj -o collision_meshes/
+  %(prog)s *.stl -m coacd -t 0.03 -c 32
+
+  # Custom output directory
+  %(prog)s *.obj -o collision_meshes/
         """
     )
     parser.add_argument(
-        "input_dir",
+        "inputs",
         type=str,
-        help="Input directory containing mesh files or path to a single mesh file (STL, OBJ, DAE)"
-    )
-    parser.add_argument(
-        "output_dir",
-        type=str,
-        nargs="?",
-        default=None,
-        help="Output directory for collision meshes (default: <input_dir>/collision)"
+        nargs="+",
+        help="Input directory, single mesh file, or multiple mesh files (STL, OBJ, DAE). "
+             "Shell globs like *.stl are accepted."
     )
     parser.add_argument(
         "-o", "--output-dir",
         type=str,
-        nargs="?",
         default=None,
         help="Output directory for collision meshes (default: <input_dir>/collision)"
     )
@@ -303,40 +305,40 @@ Examples:
         exit(1)
     
     # Set up paths
-    input_path = os.path.abspath(args.input_dir)
-    
-    # Check if input is a file or directory
-    if os.path.isfile(input_path):
-        # Single file mode
-        indirpath = os.path.dirname(input_path)
-        mesh_paths = [input_path]
-        
-        # Validate file extension
-        supported_extensions = ['stl', 'STL', 'obj', 'OBJ', 'dae', 'DAE']
-        file_ext = os.path.splitext(input_path)[1][1:]  # Remove the dot
-        if file_ext not in supported_extensions:
-            print(f"Error: Unsupported file format '{file_ext}'")
-            print(f"Supported formats: {', '.join(set([ext.lower() for ext in supported_extensions]))}")
-            exit(1)
-    elif os.path.isdir(input_path):
+    inputs = [os.path.abspath(p) for p in args.inputs]
+    supported_extensions = {'stl', 'obj', 'dae'}
+
+    if len(inputs) == 1 and os.path.isdir(inputs[0]):
         # Directory mode
-        indirpath = input_path
-        
-        # Get mesh files - support common URDF mesh formats (case-insensitive)
-        supported_extensions = ['stl', 'STL', 'obj', 'OBJ', 'dae', 'DAE']
+        indirpath = inputs[0]
+        case_insensitive_patterns = [
+            '*.[sS][tT][lL]',
+            '*.[oO][bB][jJ]',
+            '*.[dD][aA][eE]',
+        ]
         mesh_paths = []
-        for ext in supported_extensions:
-            pattern = os.path.join(indirpath, f"*.{ext}")
-            mesh_paths.extend(glob.glob(pattern))
-        
+        for pat in case_insensitive_patterns:
+            mesh_paths.extend(glob.glob(os.path.join(indirpath, pat)))
+
         if not mesh_paths:
             print(f"No mesh files found in {indirpath}")
-            print(f"Supported formats: {', '.join(set([ext.lower() for ext in supported_extensions]))}")
+            print("Supported formats: stl, obj, dae (case-insensitive)")
             exit(1)
     else:
-        print(f"Error: Path does not exist: {input_path}")
-        exit(1)
-    
+        # One or more explicit file paths (including shell-expanded globs)
+        mesh_paths = []
+        for p in inputs:
+            if not os.path.isfile(p):
+                print(f"Error: Path does not exist: {p}")
+                exit(1)
+            file_ext = os.path.splitext(p)[1][1:].lower()
+            if file_ext not in supported_extensions:
+                print(f"Error: Unsupported file format '{file_ext}'")
+                print(f"Supported formats: {', '.join(sorted(supported_extensions))}")
+                exit(1)
+            mesh_paths.append(p)
+        indirpath = os.path.dirname(mesh_paths[0])
+
     # Set up output directory
     if args.output_dir is None:
         outdirpath = os.path.join(indirpath, "collision")

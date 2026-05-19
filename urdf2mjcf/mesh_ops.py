@@ -32,8 +32,9 @@ try:
     )
 
     GENERATE_COLLISION_AVAILABLE = True
-except ImportError:
+except ImportError as e:
     GENERATE_COLLISION_AVAILABLE = False
+    _GENERATE_COLLISION_IMPORT_ERROR = str(e)
 
 try:
     from urdf2mjcf.tools.simplify_mesh import simplify_mesh as simplify_mesh_tool
@@ -475,8 +476,10 @@ def copy_mesh_files(
         )
 
     if generate_collision and not GENERATE_COLLISION_AVAILABLE:
+        _err = globals().get("_GENERATE_COLLISION_IMPORT_ERROR", "unknown error")
         print_warning(
-            "Collision mesh generation requested but open3d library not available. Install with: pip install open3d"
+            f"Collision mesh generation requested but unavailable: {_err}. "
+            "Install with: pip install trimesh[easy]"
         )
 
     if simplify_meshes and not SIMPLIFY_MESH_TOOL_AVAILABLE:

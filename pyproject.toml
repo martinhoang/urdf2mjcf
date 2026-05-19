@@ -11,7 +11,6 @@ dependencies = [
     "mujoco>=3.3.6",
     "pymeshlab>=2025.7",
     "trimesh[easy]>=4.0.0",
-    "open3d>=0.18.0",
     "coacd>=1.0.7",
     "pycollada>=0.8",
     "tqdm>=4.67.1",
