@@ -150,10 +150,7 @@ def process_mesh_convex_hull(mesh_path, outdirpath, num_points=5000, visualize=F
     Args:
         mesh_path: Path to input mesh file (STL, OBJ, PLY, OFF, etc.)
         outdirpath: Output directory path
-        num_points: Number of surface points to sample before hull computation.
-                    Applied only when the mesh has more vertices than this count,
-                    which mirrors the original point-cloud hull approach and keeps
-                    computation fast on dense visual meshes.
+        num_points: Unused; kept for API compatibility.
         visualize: Whether to show visualization (disabled for parallel processing)
         verbose: Whether to print verbose output
 
@@ -165,16 +162,10 @@ def process_mesh_convex_hull(mesh_path, outdirpath, num_points=5000, visualize=F
 
     try:
         mesh = trimesh.load(mesh_path, force="mesh")
+        # Compute convex hull from all vertices to guarantee the true maximal hull.
+        # (Sampling-based approaches can miss extremal vertices in small triangles.)
+        hull = mesh.convex_hull
 
-        # Sample surface points for hull computation to match original behavior
-        # and keep computation fast on dense visual meshes.
-        if num_points > 0 and len(mesh.vertices) > num_points:
-            pts, _ = trimesh.sample.sample_surface_even(mesh, num_points)
-            hull = trimesh.PointCloud(pts).convex_hull
-        else:
-            hull = mesh.convex_hull
-
-        # Visualization (only in single-threaded mode)
         if visualize:
             hull.show()
 
@@ -191,15 +182,8 @@ def process_mesh_convex_hull(mesh_path, outdirpath, num_points=5000, visualize=F
 
 
 def process_mesh(mesh_path, outdirpath, visualize=False, verbose=False):
-    """
-    Default entry point: generate a convex hull collision mesh.
-
-    This is the function imported by mesh_ops.py via
-    ``from urdf2mjcf.tools.generate_collision_mesh import process_mesh``.
-    """
-    return process_mesh_convex_hull(
-        mesh_path, outdirpath, visualize=visualize, verbose=verbose
-    )
+    """Generate a collision mesh using the convex hull method (default for pipeline use)."""
+    return process_mesh_convex_hull(mesh_path, outdirpath, visualize=visualize, verbose=verbose)
 
 
 def main():
