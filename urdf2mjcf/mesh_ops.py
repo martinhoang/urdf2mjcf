@@ -467,9 +467,21 @@ def copy_mesh_files(
     # Thread-safe locks for shared data structures
     material_lock = Lock()
     inertia_lock = Lock()
-    counter_lock = (
-        Lock()
-    )  # Check tool availability and warn if requested but not available
+    counter_lock = Lock()
+    # Per-destination-file lock to prevent concurrent copy+simplify of the same output path.
+    # Multiple links may share the same mesh (e.g. synapticon_jd12_visual.stl); without
+    # this lock a shutil.copy2 from one thread can corrupt the file while pymeshlab in
+    # another thread has it open, producing "Malformed file" errors.
+    _dest_file_locks: dict = {}
+    _dest_file_locks_meta = Lock()
+
+    def _get_dest_lock(path: str) -> Lock:
+        """Return (creating if necessary) the per-file lock for *path*."""
+        with _dest_file_locks_meta:
+            if path not in _dest_file_locks:
+                _dest_file_locks[path] = Lock()
+            return _dest_file_locks[path]
+
     if calculate_inertia_flag and not CALCULATE_INERTIA_AVAILABLE:
         print_warning(
             "Inertia calculation requested but trimesh library not available. Install with: pip install trimesh[easy]"
@@ -542,23 +554,26 @@ def copy_mesh_files(
                 )
 
             if src_ext in SUPPORTED_FORMATS:
-                # Direct copy of STL/OBJ files (including already-extracted DAE meshes)
+                # Direct copy of STL/OBJ files (including already-extracted DAE meshes).
+                # Acquire the per-dest lock so concurrent threads for the same output
+                # file (multiple links sharing a mesh) don't interleave copy/simplify.
                 modified_dest = os.path.join(output_mesh_dir, dest_name)
-                try:
-                    shutil.copy2(src, modified_dest)
-                    with counter_lock:
-                        copied_count += 1
-                    mesh_materials.append(
-                        {"file": dest_name, "material": None, "rgba": None}
-                    )
-                    print_debug(
-                        f"Copied '{mesh_type}' mesh '{src_name}' to '{dest_name}'."
-                    )
-                except Exception as e:
-                    print_warning(f"Could not copy mesh from '{src}'. Error: {e}")
-                    raise RuntimeError(
-                        f"Failed to copy mesh from '{src}' to '{modified_dest}'."
-                    )
+                with _get_dest_lock(modified_dest):
+                    try:
+                        shutil.copy2(src, modified_dest)
+                        with counter_lock:
+                            copied_count += 1
+                        mesh_materials.append(
+                            {"file": dest_name, "material": None, "rgba": None}
+                        )
+                        print_debug(
+                            f"Copied '{mesh_type}' mesh '{src_name}' to '{dest_name}'."
+                        )
+                    except Exception as e:
+                        print_warning(f"Could not copy mesh from '{src}'. Error: {e}")
+                        raise RuntimeError(
+                            f"Failed to copy mesh from '{src}' to '{modified_dest}'."
+                        )
 
             elif src_ext in CONVERTIBLE_FORMATS:
                 # DAE files that weren't extracted (fallback case)
@@ -572,7 +587,10 @@ def copy_mesh_files(
                     )
                 try:
                     modified_dest = os.path.join(output_mesh_dir, dest_name)
-                    simplify_mesh(src, modified_dest, mesh_reduction)
+                    # Use reduction=0.0 here to preserve all faces; the
+                    # caller's simplify_params (target_faces) will handle
+                    # any needed reduction afterwards.
+                    simplify_mesh(src, modified_dest, 0.0)
                     print_debug(
                         f"-> Converted mesh:\n\tFrom: '{src}' ({src_ext.upper()})\n\tTo: '{modified_dest}' ({dest_ext.upper()})"
                     )
@@ -623,22 +641,37 @@ def copy_mesh_files(
                 translation = params.get("translation", None)
                 scale = params.get("scale", None)
 
-                print_info(
-                    f"Simplifying {mesh_type_name} mesh for link '{link_name}': {os.path.basename(mesh_file_path)}"
+                print_debug(
+                    f"Checking {mesh_type_name} mesh for link '{link_name}': {os.path.basename(mesh_file_path)}"
                 )
-                # Protected by lock to prevent concurrent pymeshlab access
-                with _pymeshlab_lock:
-                    simplify_mesh_tool(
-                        mesh_file_path,
-                        mesh_file_path,
-                        reduction,
-                        target_faces,
-                        translation,
-                        scale,
+                # Hold the per-file lock for the entire trimesh-read + pymeshlab
+                # simplification sequence so that a concurrent thread cannot overwrite
+                # the file (via shutil.copy2) while we have it open.
+                with _get_dest_lock(mesh_file_path):
+                    _mesh_faces_before = None
+                    try:
+                        import trimesh as _tm_check
+                        _mesh_faces_before = len(_tm_check.load(mesh_file_path, process=False).faces)
+                    except Exception:
+                        pass
+                    with _pymeshlab_lock:
+                        simplify_mesh_tool(
+                            mesh_file_path,
+                            mesh_file_path,
+                            reduction,
+                            target_faces,
+                            translation,
+                            scale,
+                        )
+                # Only print confirmation if actual simplification happened
+                if target_faces is not None and _mesh_faces_before is not None and _mesh_faces_before <= target_faces:
+                    print_debug(
+                        f"-> Skipped (faces {_mesh_faces_before} <= target {target_faces}): {os.path.basename(mesh_file_path)}"
                     )
-                print_confirm(
-                    f"-> Simplified {mesh_type_name} mesh: {os.path.basename(mesh_file_path)}"
-                )
+                else:
+                    print_confirm(
+                        f"-> Simplified {mesh_type_name} mesh: {os.path.basename(mesh_file_path)}"
+                    )
             except Exception as e:
                 print_warning(
                     f"Failed to simplify {mesh_type_name} mesh '{mesh_file_path}': {e}"

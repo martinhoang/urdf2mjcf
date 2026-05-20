@@ -1,4 +1,6 @@
 import os
+import re
+import sys
 import shutil
 import subprocess
 import tempfile
@@ -360,7 +362,84 @@ class URDFToMJCFConverter:
             print_debug("=" * 100)
             progress.update(task, description="[cyan]Importing to MuJoCo...")
             tracking_progress.append({"name": "Import URDF to Mujoco"})
-            model = mujoco.MjModel.from_xml_path(preprocessed_urdf_path)
+            # Load the MuJoCo model.  Some meshes may have near-zero volume
+            # (very thin parts, indicator lights, etc.) which MuJoCo rejects
+            # with "mesh volume is too small: MESH_NAME".  MuJoCo itself suggests
+            # "Try setting inertia to shell", so we parse the failing mesh name,
+            # inject <mesh name="..." shellinertia="true"/> into the <mujoco><asset>
+            # extension block of the preprocessed URDF, and retry.
+            # "The given address is empty" is a C-layer stderr line that appears
+            # after the Python exception; suppress it via fd-level redirect.
+            _volume_re = re.compile(r"mesh volume is too small:\s+(\S+)")
+            _current_xml_path = preprocessed_urdf_path
+            _shell_patched: set = set()
+            _MAX_SHELL_RETRIES = 50
+            # Suppress C-level stderr for the entire retry loop so that deferred
+            # MuJoCo writes (like "The given address is empty") are also silenced.
+            _stderr_fd = sys.stderr.fileno()
+            _old_stderr_fd = os.dup(_stderr_fd)
+            _devnull = open(os.devnull, 'w')
+            try:
+                os.dup2(_devnull.fileno(), _stderr_fd)
+                for _attempt in range(_MAX_SHELL_RETRIES + 1):
+                    try:
+                        model = mujoco.MjModel.from_xml_path(_current_xml_path)
+                    except Exception as _exc:
+                        _exc_str = str(_exc)
+                        _m = _volume_re.search(_exc_str)
+                        if _m is None or _attempt == _MAX_SHELL_RETRIES:
+                            # Not a volume error (or too many retries) – re-raise
+                            raise
+                        _bad_mesh = _m.group(1)
+                        if _bad_mesh in _shell_patched:
+                            raise  # Already patched; give up
+                        _shell_patched.add(_bad_mesh)
+                        print_warning(
+                            f"Mesh '{_bad_mesh}' has near-zero volume; "
+                            f"setting shellinertia='true' and retrying."
+                        )
+                        # Patch the preprocessed URDF:
+                        # shellinertia can't be injected via <mujoco><asset> because
+                        # MuJoCo doesn't merge attributes onto auto-created URDF mesh
+                        # assets.  Instead, remove the <visual> element(s) that
+                        # reference this mesh so MuJoCo never loads it.  These meshes
+                        # are typically tiny decorative parts (indicator lights, etc.)
+                        # whose near-zero volume MuJoCo rejects.
+                        _xml_tree = ET.parse(_current_xml_path)
+                        _xml_root = _xml_tree.getroot()
+                        # The filename in the URDF is the mesh name + ".stl" (or similar)
+                        _bad_mesh_lower = _bad_mesh.lower()
+                        _removed_visuals = 0
+                        for _link_el in _xml_root.iter("link"):
+                            for _vis_el in list(_link_el.findall("visual")):
+                                for _geom_el in _vis_el.iter("geometry"):
+                                    for _mesh_el in _geom_el.findall("mesh"):
+                                        _fname = _mesh_el.get("filename", "")
+                                        _basename = os.path.splitext(
+                                            os.path.basename(_fname)
+                                        )[0].lower()
+                                        if _basename == _bad_mesh_lower:
+                                            _link_el.remove(_vis_el)
+                                            _removed_visuals += 1
+                        if _removed_visuals == 0:
+                            print_warning(
+                                f"Could not find any <visual> referencing "
+                                f"'{_bad_mesh}' in URDF; giving up."
+                            )
+                            raise
+                        ET.indent(_xml_tree, space="\t")
+                        _xml_tree.write(_current_xml_path, encoding="unicode")
+                        continue  # Retry with the patched XML
+                    break  # Successful load – exit retry loop
+            finally:
+                os.dup2(_old_stderr_fd, _stderr_fd)
+                os.close(_old_stderr_fd)
+                _devnull.close()
+            if _shell_patched:
+                print_confirm(
+                    f"Applied shellinertia fix to {len(_shell_patched)} mesh(es): "
+                    + ", ".join(sorted(_shell_patched))
+                )
 
             with tempfile.NamedTemporaryFile(
                 mode="r", delete=True, suffix=".xml", encoding="utf-8"
@@ -429,7 +508,7 @@ class URDFToMJCFConverter:
             mjcf_postprocess.post_process_add_clock_publisher_plugin(root)
         if args.add_ros2_control:
             mjcf_postprocess.post_process_add_ros2_control_plugin(
-                root, config_file=args.ros2_control_config
+                root, self.default_ros2_control_instance, config_file=args.ros2_control_config
             )
         # Group MujocoRosUtils extension plugins together
         mjcf_postprocess.post_process_group_ros_utils_plugins(root)
@@ -471,6 +550,9 @@ class URDFToMJCFConverter:
             root, custom_mujoco_elements
         )
         mjcf_postprocess.post_process_group_ros_utils_plugins(root)
+
+        # Assign visual geoms to group 2 (visible) and collision geoms to group 3 (hidden by default)
+        mjcf_postprocess.post_process_geom_groups(root)
         progress.update(task, advance=1)
 
         # Save final output

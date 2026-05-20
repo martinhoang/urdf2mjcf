@@ -26,6 +26,30 @@ def simplify_mesh(
     """
     print_debug(f"Processing: {input_file}")
     try:
+        # Fast-path: when only a face-count cap is requested and the file is
+        # already at the destination, we can check the face count cheaply
+        # with trimesh before loading the heavy pymeshlab pipeline.
+        needs_transform = bool(translate) or bool(scale_factor)
+
+        # Pre-check face count to avoid loading pymeshlab unnecessarily
+        if not needs_transform and target_faces is not None and not target_reduction:
+            try:
+                import trimesh as _tm
+                _preview = _tm.load(input_file, process=False)
+                _current_faces = len(_preview.faces)
+                if _current_faces <= target_faces:
+                    print_debug(
+                        f"Skipping '{input_file}': {_current_faces} faces <= target {target_faces} (no simplification needed)"
+                    )
+                    # If output differs from input we still need to copy
+                    if os.path.abspath(input_file) != os.path.abspath(output_file):
+                        import shutil
+                        os.makedirs(os.path.dirname(output_file) or ".", exist_ok=True)
+                        shutil.copy2(input_file, output_file)
+                    return
+            except Exception:
+                pass  # Fall through to full pymeshlab path on any error
+
         ms = ml.MeshSet()
         ms.load_new_mesh(input_file)
 
@@ -86,6 +110,15 @@ def simplify_mesh(
             )
             final_faces = ms.current_mesh().face_number()
             print_debug(f"Simplified mesh has {final_faces} faces")
+        elif not needs_transform:
+            # No simplification and no transforms applied — nothing changed.
+            print_debug(f"No changes needed for '{input_file}', skipping save")
+            if os.path.abspath(input_file) != os.path.abspath(output_file):
+                import shutil
+                os.makedirs(os.path.dirname(output_file) or ".", exist_ok=True)
+                shutil.copy2(input_file, output_file)
+            return
+
         # Ensure output directory exists
         output_dir = os.path.dirname(output_file)
         if output_dir:

@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import logging
 import os
 import sys
 import numpy as np
@@ -90,7 +91,11 @@ def extract_meshes_from_dae(dae_file_path, output_dir, output_format='stl', verb
     if not TRIMESH_AVAILABLE:
         print("Error: trimesh not available. Install with: pip install trimesh")
         return 0, 0, {}
-    
+
+    # Suppress trimesh's verbose logging (cache-clear notices, negative-volume
+    # warnings, etc.) that would otherwise pollute the user's terminal.
+    logging.getLogger('trimesh').setLevel(logging.ERROR)
+
     if verbose:
         print(f"Loading DAE file: {dae_file_path}")
     
@@ -122,32 +127,78 @@ def extract_meshes_from_dae(dae_file_path, output_dir, output_format='stl', verb
                 if hasattr(dae.assetInfo, 'unitname') and dae.assetInfo.unitname is not None:
                     unit_name = dae.assetInfo.unitname
             
-            # Calculate scale factor to convert to meters
+            # Calculate scale factor to convert to meters.
+            # unit_meter is the DAE unit expressed in meters (e.g. 0.001 for mm).
+            # When unit_meter == 1.0 the file is already in meters; only override
+            # that if the unitname explicitly names a sub-meter unit.
+            #
+            # blender_legacy_axes: set True when the Blender 2.x unit bug is
+            # detected (declared meter=1 but vertices are in mm).  The SAME
+            # Blender exporter also declares 'Z_UP' for meshes that are actually
+            # in Y_UP orientation, so we must also apply the Y→Z rotation when
+            # this flag is set (even though the header says Z_UP).
+            blender_legacy_axes = False
+
             if unit_meter != 1.0:
                 scale_factor = unit_meter
                 if verbose:
                     print(f"DAE unit detected: {unit_name} (meter scale: {unit_meter})")
                     print(f"Applying scale factor: {scale_factor} to convert to meters")
             else:
-                # No unit info found - check if unit_name suggests non-meter units
+                # unit_meter == 1.0: the file declares metre-scale units.
+                # Only override if the unit name explicitly says otherwise.
                 unit_name_lower = unit_name.lower()
-                if 'millimeter' in unit_name_lower or 'mm' == unit_name_lower:
+                if 'millimeter' in unit_name_lower or unit_name_lower == 'mm':
                     scale_factor = 0.001
                     if verbose:
                         print(f"DAE unit detected: {unit_name}, applying scale factor: {scale_factor} (mm to m)")
-                elif 'centimeter' in unit_name_lower or 'cm' == unit_name_lower:
+                elif 'centimeter' in unit_name_lower or unit_name_lower == 'cm':
                     scale_factor = 0.01
                     if verbose:
                         print(f"DAE unit detected: {unit_name}, applying scale factor: {scale_factor} (cm to m)")
-                elif 'inch' in unit_name_lower or 'in' == unit_name_lower:
+                elif 'inch' in unit_name_lower or unit_name_lower == 'in':
                     scale_factor = 0.0254
                     if verbose:
                         print(f"DAE unit detected: {unit_name}, applying scale factor: {scale_factor} (inch to m)")
                 else:
-                    # Default to millimeter conversion if no unit info
-                    scale_factor = 0.001
-                    if verbose:
-                        print(f"No unit info in DAE, defaulting to scale factor: {scale_factor} (assuming mm to m)")
+                    # 'meter' or any unknown name with unitmeter==1.0.
+                    #
+                    # Some DAE exporters (notably Blender 2.x used by Universal
+                    # Robots) declare meter="1" but store vertices in millimetres.
+                    # Detect this by sampling the raw vertex magnitudes from the
+                    # first available primitive: if any coordinate exceeds
+                    # _METER_UNIT_MAX_M (2 m) in a file that claims meters, the
+                    # data is almost certainly in mm.
+                    _METER_UNIT_MAX_M = 2.0
+                    scale_factor = 1.0
+                    try:
+                        for _g in dae.geometries:
+                            for _p in _g.primitives:
+                                if isinstance(_p, (collada.polylist.Polylist, collada.triangleset.TriangleSet)):
+                                    _verts = np.asarray(_p.vertex)
+                                    _max_coord = float(np.max(np.abs(_verts)))
+                                    if _max_coord > _METER_UNIT_MAX_M:
+                                        scale_factor = 0.001
+                                        blender_legacy_axes = True
+                                        if verbose:
+                                            print(
+                                                f"DAE declares meter units but max vertex coord "
+                                                f"= {_max_coord:.1f} > {_METER_UNIT_MAX_M} m; "
+                                                f"assuming Blender legacy export (mm + Y_UP) — "
+                                                f"applying scale_factor=0.001 and Y→Z rotation"
+                                            )
+                                    else:
+                                        if verbose:
+                                            print(
+                                                f"DAE unit detected: {unit_name} (unitmeter=1.0); "
+                                                f"max vertex coord = {_max_coord:.4f} m; no scaling applied"
+                                            )
+                                    break  # only need the first primitive
+                            else:
+                                continue
+                            break
+                    except Exception:
+                        pass  # keep scale_factor=1.0 on any sampling error
         else:
             if verbose:
                 print(f"Using explicit scale factor: {scale_factor}")
@@ -210,17 +261,49 @@ def extract_meshes_from_dae(dae_file_path, output_dir, output_format='stl', verb
                         if scale_factor != 1.0:
                             mesh.apply_scale(scale_factor)
                         
-                        # Handle coordinate system conversion
-                        # pycollada converts Z-up (COLLADA default) to Y-up automatically.
-                        # To restore the original Z-up orientation, we apply a +90 degree rotation around the X-axis.
-                        if up_axis == 'Z_UP':
-                            # Rotate from Y-up back to Z-up: rotate +90° around X-axis
+                        # Handle coordinate system conversion.
+                        # pycollada reads vertices as-is — it does NOT reinterpret axes.
+                        # MuJoCo uses Z-up, so we rotate for Y-up DAE files.
+                        # Special case: Blender 2.x exporters that trigger the
+                        # legacy unit bug (blender_legacy_axes=True) also export
+                        # meshes in Y-up orientation while falsely declaring Z_UP.
+                        # For those files we apply the same +90° X rotation.
+                        needs_rotation = (up_axis == 'Y_UP') or (up_axis == 'Z_UP' and blender_legacy_axes)
+                        if needs_rotation:
+                            # Rotate +90° around X to convert Y-up → Z-up
                             rotation_matrix = trimesh.transformations.rotation_matrix(
                                 angle=np.radians(90),
                                 direction=[1, 0, 0]
                             )
                             mesh.apply_transform(rotation_matrix)
-                        
+                        # Genuine Z_UP matches MuJoCo directly; no rotation needed.
+
+                        # Skip degenerate (flat / coplanar) meshes.
+                        # MuJoCo rejects them with "mesh volume is too small" when it
+                        # tries to compute volume-based inertia.  We detect coplanarity
+                        # via SVD: if the smallest singular value of the centred vertex
+                        # matrix is negligible relative to the largest, all vertices lie
+                        # in a plane.  This avoids convex_hull (which raises exceptions
+                        # on meshes with inverted normals and also prints trimesh noise).
+                        try:
+                            if len(mesh.vertices) >= 4:
+                                centered = mesh.vertices - mesh.vertices.mean(axis=0)
+                                sv = np.linalg.svd(centered, compute_uv=False)
+                                is_degenerate = (sv[0] > 0 and sv[-1] < 1e-6 * sv[0])
+                            else:
+                                is_degenerate = True  # too few vertices for a solid
+                        except Exception:
+                            is_degenerate = False  # conservative: keep on error
+
+                        if is_degenerate:
+                            if verbose:
+                                print(
+                                    f"Warning: Skipping coplanar (flat) mesh "
+                                    f"{geometry_name}_{prim_idx} ({len(mesh.faces)} faces) "
+                                    f"— MuJoCo cannot compute volume inertia for flat geometry."
+                                )
+                            continue
+
                         # Extract material/color information
                         material_info = {}
                         material_name = None

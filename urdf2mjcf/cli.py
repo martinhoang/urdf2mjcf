@@ -274,9 +274,9 @@ def main():
         "-stf",
         "--simplify-target-faces",
         type=int,
-        default=None,
+        default=100000,
         metavar="COUNT",
-        help="Simplify meshes to target number of faces (e.g., 200000). Mutually exclusive with --simplify-reduction.",
+        help="Simplify meshes to target number of faces. Default: 100000. Mutually exclusive with --simplify-reduction.",
     )
     advanced_group.add_argument(
         "-gcm",
@@ -304,10 +304,12 @@ def main():
         help="Do not transform inertial tensors to zero RPY orientation (enabled by default).",
     )
     advanced_group.add_argument(
-        "-sdm",
-        "--separate-dae-meshes",
-        action="store_true",
-        help="Extract each mesh/material from DAE as separate STL files with colors. Default: combine all into single STL.",
+        "-cdm",
+        "--combine-dae-meshes",
+        action="store_false",
+        dest="separate_dae_meshes",
+        default=True,
+        help="Combine all meshes/materials from a DAE into a single STL instead of extracting them as separate files.",
     )
     advanced_group.add_argument(
         "-nmt",

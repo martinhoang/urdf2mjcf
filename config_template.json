@@ -26,7 +26,7 @@
     "validate_mesh_faces": true,
     "max_faces_limit": 200000,
     "simplify_reduction": 1.0,
-    "simplify_target_faces": null,
+    "simplify_target_faces": 100000,
     "generate_collision_meshes": false,
     "calculate_inertia": false,
     "save_preprocessed": true,

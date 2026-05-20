@@ -952,3 +952,58 @@ def post_process_add_materials(root, material_info, mesh_dir="assets/"):
 		print_debug("-> No materials added (no valid RGBA data found in visual meshes)")
 
 
+def post_process_geom_groups(root):
+	"""Assign geom groups so visual geoms are visible and collision geoms are hidden by default.
+
+	MuJoCo renders geomgroup[0..2] by default and hides geomgroup[3+].
+	Convention matching MuJoCo examples:
+	  group 2 = visual-only meshes (visible)
+	  group 3 = collision shapes (hidden by default)
+
+	Visual geoms are identified by effective contype="0" conaffinity="0".  The
+	effective value is resolved by checking the explicit geom attribute first,
+	then falling back to the value in the matching <default class="..."> element,
+	and finally defaulting to "1" (as MuJoCo does).
+
+	The floor geom (name="floor") is left in its default group so it stays visible.
+	"""
+	# Build a map from class name → {contype, conaffinity} from all <default> blocks.
+	# We iterate over all <default> elements (including nested ones inside <default>).
+	class_attrs: dict[str, dict[str, str]] = {}
+	for default_elem in root.iter("default"):
+		cls_name = default_elem.get("class", "main")
+		geom_default = default_elem.find("geom")
+		if geom_default is not None:
+			attrs: dict[str, str] = {}
+			if "contype" in geom_default.attrib:
+				attrs["contype"] = geom_default.get("contype")
+			if "conaffinity" in geom_default.attrib:
+				attrs["conaffinity"] = geom_default.get("conaffinity")
+			if attrs:
+				class_attrs[cls_name] = attrs
+
+	n_visual = 0
+	n_collision = 0
+	for geom in root.iter("geom"):
+		# Leave floor geom untouched so it stays visible when add_floor is used
+		if geom.get("name") == "floor":
+			continue
+
+		# Resolve effective contype / conaffinity:
+		#   1. Explicit attribute on the geom element
+		#   2. Value from the matching default class
+		#   3. MuJoCo built-in default: "1"
+		cls_name = geom.get("class", "main")
+		cls_defaults = class_attrs.get(cls_name, {})
+		eff_contype = geom.get("contype") or cls_defaults.get("contype", "1")
+		eff_conaffinity = geom.get("conaffinity") or cls_defaults.get("conaffinity", "1")
+
+		if eff_contype == "0" and eff_conaffinity == "0":
+			geom.set("group", "2")
+			n_visual += 1
+		else:
+			geom.set("group", "3")
+			n_collision += 1
+	print_info(f"-> Assigned {n_visual} visual geoms to group 2, {n_collision} collision geoms to group 3.")
+
+

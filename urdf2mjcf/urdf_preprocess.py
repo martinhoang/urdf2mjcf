@@ -290,7 +290,7 @@ def preprocess_urdf(
     urdf_path,
     compiler_options,
     default_mesh_dir,
-    separate_dae_meshes=False,
+    separate_dae_meshes=True,
     append_mesh_type=False,
     zero_inertial_rpy=True,
 ):
