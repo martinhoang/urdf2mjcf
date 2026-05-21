@@ -670,7 +670,7 @@ def preprocess_urdf(
     ###########################
     # Process <mujoco> tags
     ###########################
-    all_mujoco_nodes = root.findall("mujoco")
+    all_mujoco_nodes = root.findall(".//mujoco")
     custom_mujoco_elements = []
     compiler_node = None
 
@@ -681,9 +681,12 @@ def preprocess_urdf(
         # Merge all mujoco nodes recursively
         mujoco_node = _merge_nodes_recursively(all_mujoco_nodes)
 
-        # Remove all existing mujoco nodes
+        # Remove all existing mujoco nodes (may be at any depth)
         for node_to_remove in all_mujoco_nodes:
-            root.remove(node_to_remove)
+            parent = next(
+                (p for p in root.iter() if node_to_remove in list(p)), root
+            )
+            parent.remove(node_to_remove)
         if mujoco_node is not None:
             root.insert(0, mujoco_node)
     else:
