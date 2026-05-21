@@ -51,13 +51,16 @@ def _parse_attr_string(attr_str, separator=" "):
 	attrs = {}
 	duplicate_keys = set()
 	
-	# Use regex to find all key=value or key:=value pairs, handling quoted values that may contain spaces
-	# Supports both = and := syntax
-	pattern = r"(\w+):?=(['\"])(.*?)\2"
+	# Match key=value or key:=value pairs.
+	# Value may be:
+	#   - quoted:   key='some value'  or  key="some value"  (spaces allowed inside)
+	#   - unquoted: key=0.1  or  key=true  (terminated by whitespace or separator)
+	pattern = r"""(\w+):?=(?:(['\"])(.*?)\2|([^\s;,'"]+))"""
 	matches = re.findall(pattern, attr_str)
 	
 	for match in matches:
-		key, quote, value = match
+		key, _quote, quoted_val, unquoted_val = match
+		value = quoted_val if _quote else unquoted_val
 		if key in attrs:
 			duplicate_keys.add(key)
 			print_warning(f"Duplicate attribute '{key}' found in '{attr_str}'. Using last value: '{value}'")
