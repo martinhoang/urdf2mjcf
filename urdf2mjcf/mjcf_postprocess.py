@@ -613,7 +613,7 @@ def post_process_make_base_floating(root, height_above_ground=0.0):
 				or base_body.find('joint[@type="free"]') is not None
 			)
 			if not has_free:
-				free_joint = ET.Element("freejoint", {"name": "root"})
+				free_joint = ET.Element("freejoint", {})
 				base_body.insert(0, free_joint)
 				print_debug(
 					f"-> Made the base link '{base_body.get('name')}' floating with a free joint."

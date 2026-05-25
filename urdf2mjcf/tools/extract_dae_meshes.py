@@ -228,7 +228,24 @@ def extract_meshes_from_dae(dae_file_path, output_dir, output_format='stl', verb
         success_count = 0
         mesh_index = 0
         mesh_info = {}
-        
+
+        # Build a symbol -> Material mapping from the scene graph's bind_material nodes.
+        # COLLADA bind_material maps a user-visible symbol (e.g. "defaultMaterial") to the
+        # actual material id (e.g. "m0DefaultMaterial").  pycollada's dae.materials dict is
+        # keyed by id, so a direct primitive.material lookup fails when symbol != id.
+        symbol_to_material = {}
+        if dae.scene:
+            def _collect_material_bindings(nodes):
+                for node in nodes:
+                    for child in getattr(node, 'children', []):
+                        if hasattr(child, 'materials'):
+                            for mat_node in child.materials:
+                                if mat_node.symbol and mat_node.target is not None:
+                                    symbol_to_material[mat_node.symbol] = mat_node.target
+                        if hasattr(child, 'children'):
+                            _collect_material_bindings([child])
+            _collect_material_bindings(dae.scene.nodes)
+
         # If not separating meshes, collect all meshes for combination
         combined_meshes = [] if not separate_meshes else None
         
@@ -333,9 +350,14 @@ def extract_meshes_from_dae(dae_file_path, output_dir, output_format='stl', verb
                                 # Try to get the actual material from the DAE's material library
                                 if isinstance(material_symbol, str):
                                     material_name = material_symbol
-                                    # Look up in the DAE's materials
+                                    # Look up in the DAE's materials by id (direct)
                                     if material_symbol in dae.materials:
                                         material_obj = dae.materials[material_symbol]
+                                        effect = material_obj.effect
+                                    elif material_symbol in symbol_to_material:
+                                        # Resolve via scene graph symbol→material binding
+                                        material_obj = symbol_to_material[material_symbol]
+                                        material_name = getattr(material_obj, 'id', material_symbol)
                                         effect = material_obj.effect
                                     else:
                                         effect = None

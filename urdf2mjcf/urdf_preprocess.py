@@ -390,16 +390,19 @@ def preprocess_urdf(
                 )
 
                 try:
-                    # Extract meshes from DAE, scoping names by link to avoid
-                    # collisions when the same DAE filename appears in multiple
-                    # links (e.g. left/right hand both have link_base.dae).
+                    # Extract meshes from DAE, scoping names by both link name
+                    # and DAE filename to avoid collisions when:
+                    # (a) the same DAE appears in multiple links (e.g. left/right hand)
+                    # (b) a single link references multiple DAE files whose internal
+                    #     geometry IDs happen to be identical (e.g. VLP16_base_1.dae
+                    #     and VLP16_base_2.dae both contain a geometry named "meshId0").
                     success_count, total_count, dae_mesh_info = extract_meshes_from_dae(
                         src_path,
                         temp_dae_extract_dir,
                         output_format="stl",
                         verbose=False,
                         separate_meshes=separate_dae_meshes,
-                        name_prefix=link_name + "_",
+                        name_prefix=link_name + "_" + file_name + "_",
                     )
 
                     if success_count > 0 and dae_mesh_info:
