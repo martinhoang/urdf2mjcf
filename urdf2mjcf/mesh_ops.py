@@ -416,6 +416,8 @@ def copy_mesh_files(
     generate_collision=False,
     simplify_meshes=False,
     simplify_params=None,
+    simplify_collision_meshes=False,
+    simplify_collision_params=None,
     raise_on_error=True,
     max_workers=None,
 ):
@@ -431,8 +433,18 @@ def copy_mesh_files(
             calculate_inertia_flag: Whether to calculate and print inertia for meshes
             link_properties: Dict with link properties: {'link_name': {'mass': float, 'mesh_scales': {'visual': [floats], 'collision': [floats]}}}
             generate_collision: Whether to generate collision meshes using convex hulls
-            simplify_meshes: Whether to simplify meshes using the simplify tool
-            simplify_params: Dict with optional 'reduction' (0.0-1.0), 'target_faces' (int), 'translation', 'scale' for mesh simplification
+            simplify_meshes: Whether to simplify visual (and collision if simplify_collision_meshes
+                is not set) meshes using the simplify tool
+            simplify_params: Dict with optional 'reduction' (0.0-1.0), 'target_faces' (int),
+                'translation', 'scale' for mesh simplification (applies to visual meshes, and
+                to collision when simplify_collision_meshes is False)
+            simplify_collision_meshes: Whether to simplify collision meshes independently of
+                visual meshes.  When True, simplify_collision_params controls the target; the
+                regular simplify_meshes / simplify_params settings are NOT applied to collision
+                meshes (they still apply to visual meshes).
+            simplify_collision_params: Dict with optional 'reduction' (0.0-1.0), 'target_faces'
+                (int), 'translation', 'scale' used when simplify_collision_meshes is True.
+                Falls back to simplify_params when None.
             raise_on_error: Whether to raise exceptions on errors
             max_workers: Maximum number of parallel workers (None = auto-detect based on CPU count)
 
@@ -499,8 +511,20 @@ def copy_mesh_files(
             "Mesh simplification requested but pymeshlab not available. Install with: pip install pymeshlab"
         )
 
+    if simplify_collision_meshes and not SIMPLIFY_MESH_TOOL_AVAILABLE:
+        print_warning(
+            "Collision mesh simplification requested but pymeshlab not available. Install with: pip install pymeshlab"
+        )
+
     output_mesh_dir = os.path.join(output_dir, mesh_dir) if mesh_dir else output_dir
     os.makedirs(output_mesh_dir, exist_ok=True)
+
+    # Simplification result counters (thread-safe via simplify_lock)
+    simplify_lock = Lock()
+    _simplify_counts = {
+        "visual_simplified": 0, "visual_skipped": 0,
+        "collision_simplified": 0, "collision_skipped": 0,
+    }
 
     SUPPORTED_FORMATS = {".stl", ".obj"}
     CONVERTIBLE_FORMATS = {".dae"}
@@ -632,14 +656,23 @@ def copy_mesh_files(
         if not os.path.exists(mesh_file_path):
             return
 
+        # Determine which simplification settings to use for this mesh type.
+        # Collision meshes use simplify_collision_meshes / simplify_collision_params when
+        # set; otherwise they fall through to the same simplify_meshes logic as visual.
+        if mesh_type_name == "collision" and simplify_collision_meshes:
+            _do_simplify = SIMPLIFY_MESH_TOOL_AVAILABLE
+            _active_params = simplify_collision_params or simplify_params or {}
+        else:
+            _do_simplify = simplify_meshes and SIMPLIFY_MESH_TOOL_AVAILABLE
+            _active_params = simplify_params or {}
+
         # Apply mesh simplification if requested
-        if simplify_meshes and SIMPLIFY_MESH_TOOL_AVAILABLE:
+        if _do_simplify:
             try:
-                params = simplify_params or {}
-                reduction = params.get("reduction", None)
-                target_faces = params.get("target_faces", None)
-                translation = params.get("translation", None)
-                scale = params.get("scale", None)
+                reduction = _active_params.get("reduction", None)
+                target_faces = _active_params.get("target_faces", None)
+                translation = _active_params.get("translation", None)
+                scale = _active_params.get("scale", None)
 
                 print_debug(
                     f"Checking {mesh_type_name} mesh for link '{link_name}': {os.path.basename(mesh_file_path)}"
@@ -663,14 +696,38 @@ def copy_mesh_files(
                             translation,
                             scale,
                         )
-                # Only print confirmation if actual simplification happened
-                if target_faces is not None and _mesh_faces_before is not None and _mesh_faces_before <= target_faces:
-                    print_debug(
-                        f"-> Skipped (faces {_mesh_faces_before} <= target {target_faces}): {os.path.basename(mesh_file_path)}"
+                    _mesh_faces_after = None
+                    try:
+                        import trimesh as _tm_check
+                        _mesh_faces_after = len(_tm_check.load(mesh_file_path, process=False).faces)
+                    except Exception:
+                        pass
+
+                _count_key_simplified = f"{mesh_type_name}_simplified"
+                _count_key_skipped = f"{mesh_type_name}_skipped"
+
+                actually_simplified = (
+                    _mesh_faces_before is not None
+                    and _mesh_faces_after is not None
+                    and _mesh_faces_after < _mesh_faces_before
+                )
+                if actually_simplified:
+                    with simplify_lock:
+                        _simplify_counts[_count_key_simplified] += 1
+                    print_confirm(
+                        f"-> Simplified {mesh_type_name} mesh '{os.path.basename(mesh_file_path)}': "
+                        f"{_mesh_faces_before} → {_mesh_faces_after} faces"
                     )
                 else:
-                    print_confirm(
-                        f"-> Simplified {mesh_type_name} mesh: {os.path.basename(mesh_file_path)}"
+                    with simplify_lock:
+                        _simplify_counts[_count_key_skipped] += 1
+                    _reason = (
+                        f"{_mesh_faces_before} faces ≤ target {target_faces}"
+                        if target_faces is not None and _mesh_faces_before is not None
+                        else "no reduction needed"
+                    )
+                    print_debug(
+                        f"-> Skipped {mesh_type_name} mesh '{os.path.basename(mesh_file_path)}': {_reason}"
                     )
             except Exception as e:
                 print_warning(
@@ -869,5 +926,24 @@ def copy_mesh_files(
             )
     else:
         print_warning(f"-> No mesh files processed. Output: '{output_mesh_dir}'")
+
+    # Print simplification summary (always shown at INFO level when enabled)
+    if simplify_meshes or simplify_collision_meshes:
+        for mesh_type, enabled in [("visual", simplify_meshes), ("collision", simplify_collision_meshes)]:
+            if not enabled:
+                continue
+            n_simplified = _simplify_counts[f"{mesh_type}_simplified"]
+            n_skipped = _simplify_counts[f"{mesh_type}_skipped"]
+            total_checked = n_simplified + n_skipped
+            if n_simplified > 0:
+                print_confirm(
+                    f"-> {mesh_type.capitalize()} mesh simplification: "
+                    f"{n_simplified}/{total_checked} simplified, {n_skipped} already below target"
+                )
+            else:
+                print_info(
+                    f"-> {mesh_type.capitalize()} mesh simplification: "
+                    f"0/{total_checked} simplified — all meshes already below target face count"
+                )
 
     return material_info, inertia_data

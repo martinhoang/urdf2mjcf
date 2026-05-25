@@ -390,13 +390,16 @@ def preprocess_urdf(
                 )
 
                 try:
-                    # Extract meshes from DAE
+                    # Extract meshes from DAE, scoping names by link to avoid
+                    # collisions when the same DAE filename appears in multiple
+                    # links (e.g. left/right hand both have link_base.dae).
                     success_count, total_count, dae_mesh_info = extract_meshes_from_dae(
                         src_path,
                         temp_dae_extract_dir,
                         output_format="stl",
                         verbose=False,
                         separate_meshes=separate_dae_meshes,
+                        name_prefix=link_name + "_",
                     )
 
                     if success_count > 0 and dae_mesh_info:
@@ -484,10 +487,11 @@ def preprocess_urdf(
                         print_warning(
                             f"Failed to extract meshes from '{base_name}', using fallback single-mesh conversion"
                         )
-                        # Fallback: treat as single mesh
-                        dest_path = f"{file_name}.stl"
+                        # Fallback: treat as single mesh — prefix with link_name to
+                        # avoid collisions when multiple links share the same filename.
+                        dest_path = f"{link_name}_{file_name}.stl"
                         if append_mesh_type:
-                            dest_path = f"{file_name}_visual.stl"
+                            dest_path = f"{link_name}_{file_name}_visual.stl"
                         mesh_elem.set("filename", dest_path)
                         if "visual" not in link_dict:
                             link_dict["visual"] = {"from": [], "to": []}
@@ -498,10 +502,11 @@ def preprocess_urdf(
                     print_warning(
                         f"Error extracting DAE '{base_name}': {e}. Using fallback single-mesh conversion."
                     )
-                    # Fallback: treat as single mesh
-                    dest_path = f"{file_name}.stl"
+                    # Fallback: treat as single mesh — prefix with link_name to
+                    # avoid collisions when multiple links share the same filename.
+                    dest_path = f"{link_name}_{file_name}.stl"
                     if append_mesh_type:
-                        dest_path = f"{file_name}_visual.stl"
+                        dest_path = f"{link_name}_{file_name}_visual.stl"
                     mesh_elem.set("filename", dest_path)
                     if "visual" not in link_dict:
                         link_dict["visual"] = {"from": [], "to": []}
@@ -509,22 +514,25 @@ def preprocess_urdf(
                     link_dict["visual"]["to"].append(dest_path)
 
             else:
-                # Not a DAE or extraction not available - handle normally
+                # Not a DAE or extraction not available - handle normally.
+                # Always prefix with link_name so that meshes from different links
+                # with the same filename (e.g. left vs right hand) don't overwrite
+                # each other in the shared output assets directory.
                 if file_ext == ".dae":
                     print_warning(
                         f"DAE extraction not available (install pycollada and trimesh). Using fallback single-mesh conversion for '{base_name}'."
                     )
                     dest_path = (
-                        f"{file_name}_visual.stl"
+                        f"{link_name}_{file_name}_visual.stl"
                         if append_mesh_type
-                        else f"{file_name}.stl"
+                        else f"{link_name}_{file_name}.stl"
                     )
                 else:
                     if append_mesh_type:
                         fname, fext = os.path.splitext(base_name)
-                        dest_path = f"{fname}_visual{fext}"
+                        dest_path = f"{link_name}_{fname}_visual{fext}"
                     else:
-                        dest_path = base_name
+                        dest_path = f"{link_name}_{base_name}"
 
                 mesh_elem.set("filename", dest_path)
                 if "visual" not in link_dict:
@@ -563,14 +571,17 @@ def preprocess_urdf(
             file_name = os.path.splitext(base_name)[0]
             file_ext = os.path.splitext(base_name)[1].lower()
 
+            # Always prefix with link_name so meshes from different links with the
+            # same filename (e.g. left vs right hand) don't overwrite each other
+            # in the shared output assets directory.
             if file_ext == ".dae":
-                dest_path = f"{file_name}_collision.stl"
+                dest_path = f"{link_name}_{file_name}_collision.stl"
             else:
                 if append_mesh_type:
                     fname, fext = os.path.splitext(base_name)
-                    dest_path = f"{fname}_collision{fext}"
+                    dest_path = f"{link_name}_{fname}_collision{fext}"
                 else:
-                    dest_path = base_name
+                    dest_path = f"{link_name}_{base_name}"
 
             mesh_elem.set("filename", dest_path)
             if "collision" not in link_dict:

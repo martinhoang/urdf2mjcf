@@ -103,7 +103,8 @@ def find_matching_elements(root, elem):
 	tag = elem.tag
 	
 	# Check if any attribute values contain wildcards
-	has_wildcards = any('*' in attr_value for attr_value in elem.attrib.values())
+	has_wildcards = any('*' in attr_value or '?' in attr_value or '[' in attr_value
+					    for attr_value in elem.attrib.values())
 	
 	if not has_wildcards:
 		# No wildcards, use simple XPath matching

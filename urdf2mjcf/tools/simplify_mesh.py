@@ -32,7 +32,7 @@ def simplify_mesh(
         needs_transform = bool(translate) or bool(scale_factor)
 
         # Pre-check face count to avoid loading pymeshlab unnecessarily
-        if not needs_transform and target_faces is not None and not target_reduction:
+        if not needs_transform and target_faces is not None and target_reduction is None:
             try:
                 import trimesh as _tm
                 _preview = _tm.load(input_file, process=False)
@@ -78,7 +78,21 @@ def simplify_mesh(
         current_faces = ms.current_mesh().face_number()
         print_debug(f"Current mesh '{input_file}' has {current_faces} faces")
 
-        if target_faces is not None:
+        if target_faces is not None and target_reduction is not None:
+            # Both limits specified — stop at whichever is hit first (least aggressive).
+            faces_from_reduction = int(current_faces * (1.0 - target_reduction))
+            effective_target = max(target_faces, faces_from_reduction)
+            if effective_target >= current_faces:
+                target_percentage = 1.0
+            else:
+                target_percentage = effective_target / current_faces
+            print_debug(
+                f"Both limits active — target_faces={target_faces}, "
+                f"reduction={target_reduction} → {faces_from_reduction} faces; "
+                f"using first-hit target: {effective_target} faces "
+                f"(keeping {target_percentage * 100:.1f}%)"
+            )
+        elif target_faces is not None:
             # User specified target number of faces
             if target_faces >= current_faces:
                 print_debug(
@@ -187,10 +201,10 @@ def main():
 
     # Validate that only one simplification method is specified
     if reduction is not None and target_faces is not None:
-        print_error(
-            "Error: Cannot specify both --reduction and --target-faces. Choose one."
+        print_warning(
+            "Both --reduction and --target-faces specified. "
+            "Will stop at whichever limit is hit first."
         )
-        return
 
     # Default to 50% reduction if neither is specified
     if reduction is None and target_faces is None:

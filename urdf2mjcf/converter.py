@@ -20,6 +20,7 @@ from rich.live import Live
 from rich.console import Console
 
 from . import urdf_preprocess, mesh_ops, mjcf_postprocess
+from . import __version__
 from _utils import (
     print_debug,
     print_info,
@@ -195,28 +196,35 @@ class URDFToMJCFConverter:
             progress.update(task, description="[cyan]Processing meshes...")
             tracking_progress.append({"name": "Convert & Copy Meshes"})
             if not args.no_copy_meshes:
-                # Validate that only one simplification method is specified
-                if (
-                    args.simplify_reduction < 1.0
-                    and args.simplify_target_faces is not None
-                ):
-                    raise ValueError(
-                        "Cannot specify both --simplify-reduction and --simplify-target-faces. Choose one."
-                    )
-
-                # Simplification is enabled when simplify_reduction < 1.0 or target_faces is specified
+                # Build visual simplification params — both reduction and target_faces
+                # may be set simultaneously; simplify_mesh will stop at whichever
+                # limit is hit first (most conservative).
                 simplify_params = None
                 simplify_meshes = (
                     args.simplify_reduction < 1.0
                     or args.simplify_target_faces is not None
                 )
                 if simplify_meshes:
+                    simplify_params = {}
+                    if args.simplify_reduction < 1.0:
+                        simplify_params["reduction"] = args.simplify_reduction
                     if args.simplify_target_faces is not None:
-                        # Use target faces method
-                        simplify_params = {"target_faces": args.simplify_target_faces}
-                    else:
-                        # Use reduction ratio method
-                        simplify_params = {"reduction": args.simplify_reduction}
+                        simplify_params["target_faces"] = args.simplify_target_faces
+
+                # Collision simplification params (independent from visual).
+                # Both reduction and target_faces may also be combined here.
+                simplify_collision_params = None
+                simplify_collision_meshes = getattr(args, "simplify_collision_meshes", False)
+                if simplify_collision_meshes:
+                    scr = getattr(args, "simplify_collision_reduction", None)
+                    sctf = getattr(args, "simplify_collision_target_faces", None)
+                    if scr is not None or sctf is not None:
+                        simplify_collision_params = {}
+                        if scr is not None:
+                            simplify_collision_params["reduction"] = scr
+                        if sctf is not None:
+                            simplify_collision_params["target_faces"] = sctf
+                    # else: falls back to simplify_params inside copy_mesh_files
 
                 # Copy mesh files (materials already added to URDF in preprocessing)
                 material_info, calculated_inertias = mesh_ops.copy_mesh_files(
@@ -231,6 +239,8 @@ class URDFToMJCFConverter:
                     generate_collision=args.generate_collision_meshes,
                     simplify_meshes=simplify_meshes,
                     simplify_params=simplify_params,
+                    simplify_collision_meshes=simplify_collision_meshes,
+                    simplify_collision_params=simplify_collision_params,
                 )
 
                 # Update URDF with calculated inertia data
@@ -362,33 +372,30 @@ class URDFToMJCFConverter:
             print_debug("=" * 100)
             progress.update(task, description="[cyan]Importing to MuJoCo...")
             tracking_progress.append({"name": "Import URDF to Mujoco"})
-            # Load the MuJoCo model.  Some meshes may have near-zero volume
-            # (very thin parts, indicator lights, etc.) which MuJoCo rejects
-            # with "mesh volume is too small: MESH_NAME".  MuJoCo itself suggests
-            # "Try setting inertia to shell", so we parse the failing mesh name,
-            # inject <mesh name="..." shellinertia="true"/> into the <mujoco><asset>
-            # extension block of the preprocessed URDF, and retry.
-            # "The given address is empty" is a C-layer stderr line that appears
-            # after the Python exception; suppress it via fd-level redirect.
+            # Load the MuJoCo model via MjSpec so we can patch mesh inertia
+            # before compilation.  Some meshes have near-zero volume (flat logos,
+            # thin indicator lights, etc.) which MuJoCo rejects at compile time
+            # with "mesh volume is too small: MESH_NAME".  We catch that error,
+            # set inertia=SHELL on the offending mesh inside the spec, and retry
+            # — preserving the visual geometry instead of deleting it.
+            # "The given address is empty" is a C-layer stderr line; suppress it.
             _volume_re = re.compile(r"mesh volume is too small:\s+(\S+)")
-            _current_xml_path = preprocessed_urdf_path
             _shell_patched: set = set()
             _MAX_SHELL_RETRIES = 50
-            # Suppress C-level stderr for the entire retry loop so that deferred
-            # MuJoCo writes (like "The given address is empty") are also silenced.
             _stderr_fd = sys.stderr.fileno()
             _old_stderr_fd = os.dup(_stderr_fd)
             _devnull = open(os.devnull, 'w')
             try:
                 os.dup2(_devnull.fileno(), _stderr_fd)
+                # Load spec once; compilation is done (and retried) in the loop.
+                spec = mujoco.MjSpec.from_file(preprocessed_urdf_path)
                 for _attempt in range(_MAX_SHELL_RETRIES + 1):
                     try:
-                        model = mujoco.MjModel.from_xml_path(_current_xml_path)
+                        model = spec.compile()
                     except Exception as _exc:
                         _exc_str = str(_exc)
                         _m = _volume_re.search(_exc_str)
                         if _m is None or _attempt == _MAX_SHELL_RETRIES:
-                            # Not a volume error (or too many retries) – re-raise
                             raise
                         _bad_mesh = _m.group(1)
                         if _bad_mesh in _shell_patched:
@@ -398,39 +405,23 @@ class URDFToMJCFConverter:
                             f"Mesh '{_bad_mesh}' has near-zero volume; "
                             f"setting shellinertia='true' and retrying."
                         )
-                        # Patch the preprocessed URDF:
-                        # shellinertia can't be injected via <mujoco><asset> because
-                        # MuJoCo doesn't merge attributes onto auto-created URDF mesh
-                        # assets.  Instead, remove the <visual> element(s) that
-                        # reference this mesh so MuJoCo never loads it.  These meshes
-                        # are typically tiny decorative parts (indicator lights, etc.)
-                        # whose near-zero volume MuJoCo rejects.
-                        _xml_tree = ET.parse(_current_xml_path)
-                        _xml_root = _xml_tree.getroot()
-                        # The filename in the URDF is the mesh name + ".stl" (or similar)
-                        _bad_mesh_lower = _bad_mesh.lower()
-                        _removed_visuals = 0
-                        for _link_el in _xml_root.iter("link"):
-                            for _vis_el in list(_link_el.findall("visual")):
-                                for _geom_el in _vis_el.iter("geometry"):
-                                    for _mesh_el in _geom_el.findall("mesh"):
-                                        _fname = _mesh_el.get("filename", "")
-                                        _basename = os.path.splitext(
-                                            os.path.basename(_fname)
-                                        )[0].lower()
-                                        if _basename == _bad_mesh_lower:
-                                            _link_el.remove(_vis_el)
-                                            _removed_visuals += 1
-                        if _removed_visuals == 0:
+                        # Patch the mesh inertia in the spec so the visual is
+                        # preserved.  Shell inertia uses surface area rather than
+                        # volume, which is valid for flat/thin geometry.
+                        _patched = False
+                        for _mesh_spec in spec.meshes:
+                            if _mesh_spec.name == _bad_mesh:
+                                _mesh_spec.inertia = mujoco.mjtMeshInertia.mjMESH_INERTIA_SHELL
+                                _patched = True
+                                break
+                        if not _patched:
                             print_warning(
-                                f"Could not find any <visual> referencing "
-                                f"'{_bad_mesh}' in URDF; giving up."
+                                f"Could not find mesh '{_bad_mesh}' in MjSpec; "
+                                f"giving up."
                             )
                             raise
-                        ET.indent(_xml_tree, space="\t")
-                        _xml_tree.write(_current_xml_path, encoding="unicode")
-                        continue  # Retry with the patched XML
-                    break  # Successful load – exit retry loop
+                        continue  # Retry compilation with patched spec
+                    break  # Successful compile – exit retry loop
             finally:
                 os.dup2(_old_stderr_fd, _stderr_fd)
                 os.close(_old_stderr_fd)
@@ -441,11 +432,7 @@ class URDFToMJCFConverter:
                     + ", ".join(sorted(_shell_patched))
                 )
 
-            with tempfile.NamedTemporaryFile(
-                mode="r", delete=True, suffix=".xml", encoding="utf-8"
-            ) as f:
-                mujoco.mj_saveLastXML(f.name, model)
-                xml_string = f.read()
+            xml_string = spec.to_xml()
 
             assert xml_string, "Failed to read back the generated MJCF XML"
             root = ET.fromstring(xml_string)
@@ -599,6 +586,9 @@ class URDFToMJCFConverter:
         keys_to_exclude = {"config_file"}
         for key in keys_to_exclude:
             args_to_save.pop(key, None)
+
+        # Stamp the generating tool version so users can detect stale configs
+        args_to_save["urdf2mjcf_version"] = __version__
 
         config_path = os.path.join(output_dir, "config.json")
         try:

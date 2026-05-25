@@ -107,6 +107,36 @@ def _parse_conditional_replacement(attr_string):
 		print_warning(f"Invalid conditional replacement format: {attr_string}")
 		return None
 
+def _apply_inline_directives(elem):
+	"""Apply inject_attr(s) / replace_attrs directives on *elem* to *elem* itself.
+
+	When an element is being injected as a new node (e.g. via inject_children)
+	its custom-syntax attributes should be materialised as real attributes on
+	that new node rather than used to find other elements in the tree.  After
+	applying, the directive attributes are removed so they don't appear in the
+	final XML.
+	"""
+	_DIRECTIVES = ("inject_attr", "inject_attrs", "replace_attrs", "inject_children")
+
+	inject_attr  = elem.get("inject_attr")
+	inject_attrs = elem.get("inject_attrs")
+	replace_attrs = elem.get("replace_attrs")
+
+	if inject_attr:
+		for k, v in _parse_attr_string(inject_attr, separator=" ").items():
+			elem.set(k, v)
+	if inject_attrs:
+		for k, v in _parse_attr_string(inject_attrs, separator=";").items():
+			elem.set(k, v)
+	if replace_attrs and ':' not in replace_attrs:
+		for k, v in _parse_attr_string(replace_attrs, separator=",").items():
+			if elem.get(k) is not None:
+				elem.set(k, v)
+
+	for directive in _DIRECTIVES:
+		if directive in elem.attrib:
+			del elem.attrib[directive]
+
 def _parse_custom_syntax(elem):
 	"""Parse custom syntax attributes and return operations to perform.
 	
@@ -275,6 +305,10 @@ def post_process_inject_custom_mujoco_elements(root, elements):
 					
 					for child in children_to_inject:
 						child_copy = copy.deepcopy(child)
+						# Apply and strip any inline custom directives on the child itself
+						# (e.g. inject_attrs="class='foo'" should be applied to child_copy,
+						# not left as a literal attribute on the injected element).
+						_apply_inline_directives(child_copy)
 						target_node.append(child_copy)
 						child_attrs_str = ", ".join([f"{k}='{v}'" for k, v in child_copy.attrib.items()])
 						print_debug(f"  -> Injected <{child_copy.tag} {child_attrs_str}> into matching <{target_node.tag}>")
@@ -574,12 +608,17 @@ def post_process_make_base_floating(root, height_above_ground=0.0):
 	if worldbody is not None:
 		base_body = worldbody.find("body")
 		if base_body is not None:
-			if base_body.find('joint[@type="free"]') is None:
-				ET.SubElement(base_body, "joint", {"name": "root", "type": "free"})
+			has_free = (
+				base_body.find("freejoint") is not None
+				or base_body.find('joint[@type="free"]') is not None
+			)
+			if not has_free:
+				free_joint = ET.Element("freejoint", {"name": "root"})
+				base_body.insert(0, free_joint)
 				print_debug(
 					f"-> Made the base link '{base_body.get('name')}' floating with a free joint."
 				)
-		
+
 			if base_body.get("pos") is None:
 				base_body.set("pos", f"0 0 {height_above_ground}")
 

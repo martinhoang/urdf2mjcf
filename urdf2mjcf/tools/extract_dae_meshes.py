@@ -30,7 +30,7 @@ except ImportError:
     tqdm = None
 
 
-def extract_meshes_from_dae(dae_file_path, output_dir, output_format='stl', verbose=False, progress_callback=None, scale_factor=None, separate_meshes=False):
+def extract_meshes_from_dae(dae_file_path, output_dir, output_format='stl', verbose=False, progress_callback=None, scale_factor=None, separate_meshes=False, skip_degenerate=False, name_prefix=''):
     """
     Extracts all meshes from a DAE (COLLADA) file and saves them as individual files or a single combined file.
     
@@ -50,6 +50,13 @@ def extract_meshes_from_dae(dae_file_path, output_dir, output_format='stl', verb
                                        and convert to meters. If DAE has no unit info, defaults to 0.001 (mm to m).
         separate_meshes (bool): If True (default), extract each mesh/material as a separate file with color info.
                                If False, combine all meshes into a single file (legacy/backward compatible behavior).
+        skip_degenerate (bool): If True, silently skip coplanar (flat) meshes that MuJoCo cannot use for
+                               volume-based inertia computation. Default is False — flat meshes such as
+                               surface logos are valid for visual rendering and should be kept.
+        name_prefix (str): Optional prefix prepended to every extracted mesh filename. Use the URDF link
+                          name as prefix (e.g. 'dg5fs_right_link_base_') so that identical DAE files used
+                          by different links (left vs right hand) produce unique output filenames and never
+                          overwrite each other in a shared output directory.
     
     Returns:
         tuple: (success_count, total_count, mesh_info) where:
@@ -296,13 +303,20 @@ def extract_meshes_from_dae(dae_file_path, output_dir, output_format='stl', verb
                             is_degenerate = False  # conservative: keep on error
 
                         if is_degenerate:
-                            if verbose:
+                            if skip_degenerate:
+                                if verbose:
+                                    print(
+                                        f"Warning: Skipping coplanar (flat) mesh "
+                                        f"{geometry_name}_{prim_idx} ({len(mesh.faces)} faces) "
+                                        f"— MuJoCo cannot compute volume inertia for flat geometry."
+                                    )
+                                continue
+                            elif verbose:
                                 print(
-                                    f"Warning: Skipping coplanar (flat) mesh "
-                                    f"{geometry_name}_{prim_idx} ({len(mesh.faces)} faces) "
-                                    f"— MuJoCo cannot compute volume inertia for flat geometry."
+                                    f"Note: coplanar (flat) mesh {geometry_name}_{prim_idx} "
+                                    f"({len(mesh.faces)} faces) kept for visual rendering "
+                                    f"(use skip_degenerate=True to exclude)."
                                 )
-                            continue
 
                         # Extract material/color information
                         material_info = {}
@@ -365,11 +379,12 @@ def extract_meshes_from_dae(dae_file_path, output_dir, output_format='stl', verb
                                 if verbose:
                                     print(f"Warning: Could not extract material info: {e}")
                         
-                        # Create mesh name
+                        # Create mesh name (scoped by caller-supplied prefix so that
+                        # identical DAE files in different links don't collide)
                         if material_name:
-                            mesh_name = f"{geometry_name}_{material_name}_{prim_idx}"
+                            mesh_name = f"{name_prefix}{geometry_name}_{material_name}_{prim_idx}"
                         else:
-                            mesh_name = f"{geometry_name}_{prim_idx}"
+                            mesh_name = f"{name_prefix}{geometry_name}_{prim_idx}"
                         
                         # Clean mesh name (remove invalid characters)
                         mesh_name = mesh_name.replace('/', '_').replace('\\', '_').replace(' ', '_')
