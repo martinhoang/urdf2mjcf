@@ -5,7 +5,6 @@ import glob
 import os
 import trimesh
 from multiprocessing import Pool, cpu_count
-from functools import partial
 import numpy as np
 
 # Try to import CoACD for advanced convex decomposition
@@ -186,6 +185,118 @@ def process_mesh(mesh_path, outdirpath, visualize=False, verbose=False):
     return process_mesh_convex_hull(mesh_path, outdirpath, visualize=visualize, verbose=verbose)
 
 
+def _resolve_inputs(raw_inputs, output_dir_override, supported_extensions):
+    """Resolve CLI inputs to a list of (mesh_path, outdirpath) pairs.
+
+    Each input arg is handled in order:
+      1. Existing directory  → find mesh files directly inside it (non-recursive).
+      2. Existing file       → use it directly.
+      3. Anything else       → treat as a glob pattern; if no matches, retry
+                               recursively (case-insensitive) so that ``*.stl``
+                               passed from a directory whose STL files live in
+                               subdirectories (or are uppercase ``.STL``) is still
+                               found.
+
+    When *output_dir_override* is None each output file is placed in a
+    ``collision/`` sub-directory **next to its source file**, so files from
+    different directories each get their own ``collision/`` folder.
+    """
+    # Case-insensitive recursive patterns for each supported extension
+    _CI_RECURSIVE = {
+        'stl': '**/*.[sS][tT][lL]',
+        'obj': '**/*.[oO][bB][jJ]',
+        'dae': '**/*.[dD][aA][eE]',
+    }
+    _CI_DIRECT = {
+        'stl': '*.[sS][tT][lL]',
+        'obj': '*.[oO][bB][jJ]',
+        'dae': '*.[dD][aA][eE]',
+    }
+
+    def _ext_ok(path):
+        return os.path.splitext(path)[1][1:].lower() in supported_extensions
+
+    def _make_pair(f):
+        outdir = output_dir_override or os.path.join(os.path.dirname(f), 'collision')
+        return (f, os.path.abspath(outdir))
+
+    def _recursive_from(search_dir, base_pat):
+        """Find files matching base_pat (e.g. '*.stl') recursively under search_dir,
+        using case-insensitive patterns for all supported extensions."""
+        ext = os.path.splitext(base_pat)[1][1:].lower()
+        ci_pats = [_CI_RECURSIVE[e] for e in supported_extensions] if not ext or ext not in supported_extensions \
+            else [_CI_RECURSIVE[ext]] if ext in _CI_RECURSIVE else [os.path.join('**', base_pat)]
+        found = []
+        for pat in ci_pats:
+            found.extend(glob.glob(os.path.join(search_dir, pat), recursive=True))
+        return sorted(set(found))
+
+    pairs = []
+    for raw in raw_inputs:
+        abs_p = os.path.abspath(raw)
+
+        if os.path.isdir(abs_p):
+            # Directory: find mesh files non-recursively (case-insensitive)
+            found = []
+            for pat in _CI_DIRECT.values():
+                found.extend(glob.glob(os.path.join(abs_p, pat)))
+            if not found:
+                print(f"No mesh files found in directory: {abs_p}")
+                exit(1)
+            for f in sorted(found):
+                pairs.append(_make_pair(f))
+
+        elif os.path.isfile(abs_p):
+            ext = os.path.splitext(abs_p)[1][1:].lower()
+            if ext not in supported_extensions:
+                print(f"Error: Unsupported file format '{ext}' for {abs_p}")
+                print(f"Supported formats: {', '.join(sorted(supported_extensions))}")
+                exit(1)
+            pairs.append(_make_pair(abs_p))
+
+        else:
+            # Not a file or directory — treat as a glob pattern.
+            # Step 1: literal glob (works when shell expands it, or cwd has matches)
+            matches = glob.glob(raw)
+
+            if not matches:
+                # Step 2: recursive case-insensitive search from the pattern's
+                # directory component.
+                # For "*.stl"            → search cwd recursively
+                # For "/abs/path/*.stl"  → search /abs/path recursively (never cwd)
+                dirpart = os.path.dirname(raw)
+                base_pat = os.path.basename(raw)
+                search_dir = os.path.abspath(dirpart) if dirpart else os.getcwd()
+
+                if os.path.isdir(search_dir):
+                    matches = _recursive_from(search_dir, base_pat)
+
+            if not matches:
+                print(f"Error: No files found matching pattern: {raw}")
+                exit(1)
+
+            for f in sorted(os.path.abspath(m) for m in matches):
+                if _ext_ok(f):
+                    pairs.append(_make_pair(f))
+
+            if not pairs:
+                print(f"Error: No supported mesh files found matching pattern: {raw}")
+                print(f"Supported formats: {', '.join(sorted(supported_extensions))}")
+                exit(1)
+
+    return pairs
+
+
+def _process_pair(args_tuple):
+    """Top-level worker for multiprocessing — unpacks (mesh_path, outdirpath, kwargs)."""
+    mesh_path, outdirpath, kwargs = args_tuple
+    os.makedirs(outdirpath, exist_ok=True)
+    method = kwargs.pop('method')
+    if method == 'coacd':
+        return process_mesh_coacd(mesh_path, outdirpath, **kwargs)
+    return process_mesh_convex_hull(mesh_path, outdirpath, **kwargs)
+
+
 def main():
     """Main entry point for command-line usage."""
     parser = argparse.ArgumentParser(
@@ -206,7 +317,7 @@ Examples:
   # Process a single mesh file
   %(prog)s /path/to/mesh/robot.stl
 
-  # Process multiple files via shell glob
+  # Glob pattern — works even when the shell cannot expand it
   %(prog)s *.stl
 
   # Use CoACD for better collision approximation
@@ -223,14 +334,15 @@ Examples:
         "inputs",
         type=str,
         nargs="+",
-        help="Input directory, single mesh file, or multiple mesh files (STL, OBJ, DAE). "
-             "Shell globs like *.stl are accepted."
+        help="Input directory, single mesh file, or glob pattern (STL, OBJ, DAE). "
+             "Unmatched globs are searched recursively in subdirectories."
     )
     parser.add_argument(
         "-o", "--output-dir",
         type=str,
         default=None,
-        help="Output directory for collision meshes (default: <input_dir>/collision)"
+        help="Output directory for all collision meshes. "
+             "Default: a 'collision/' sub-directory next to each source file."
     )
     parser.add_argument(
         "-m", "--method",
@@ -239,7 +351,7 @@ Examples:
         default="convex-hull",
         help="Method to use for collision mesh generation (default: convex-hull)"
     )
-    
+
     # Convex hull specific parameters
     parser.add_argument(
         "-n", "--num-points",
@@ -247,7 +359,7 @@ Examples:
         default=5000,
         help="[Convex-hull] Number of points to sample for convex hull generation (default: 5000)"
     )
-    
+
     # CoACD specific parameters
     parser.add_argument(
         "-t", "--threshold",
@@ -261,7 +373,7 @@ Examples:
         default=-1,
         help="[CoACD] Max number of convex hulls, -1 for no limit (default: -1)"
     )
-    
+
     # General parameters
     parser.add_argument(
         "-j", "--jobs",
@@ -279,155 +391,78 @@ Examples:
         action="store_true",
         help="Enable verbose output (show detailed processing information)"
     )
-    
+
     args = parser.parse_args()
-    
+
     # Check if CoACD is available when requested
     if args.method == "coacd" and not COACD_AVAILABLE:
         print("Error: CoACD method requested but not available.")
         print("Install with: pip install coacd trimesh")
         exit(1)
-    
-    # Set up paths
-    inputs = [os.path.abspath(p) for p in args.inputs]
+
     supported_extensions = {'stl', 'obj', 'dae'}
+    output_dir_override = os.path.abspath(args.output_dir) if args.output_dir else None
 
-    if len(inputs) == 1 and os.path.isdir(inputs[0]):
-        # Directory mode
-        indirpath = inputs[0]
-        case_insensitive_patterns = [
-            '*.[sS][tT][lL]',
-            '*.[oO][bB][jJ]',
-            '*.[dD][aA][eE]',
-        ]
-        mesh_paths = []
-        for pat in case_insensitive_patterns:
-            mesh_paths.extend(glob.glob(os.path.join(indirpath, pat)))
+    pairs = _resolve_inputs(args.inputs, output_dir_override, supported_extensions)
+    total = len(pairs)
 
-        if not mesh_paths:
-            print(f"No mesh files found in {indirpath}")
-            print("Supported formats: stl, obj, dae (case-insensitive)")
-            exit(1)
-    else:
-        # One or more explicit file paths (including shell-expanded globs)
-        mesh_paths = []
-        for p in inputs:
-            if not os.path.isfile(p):
-                print(f"Error: Path does not exist: {p}")
-                exit(1)
-            file_ext = os.path.splitext(p)[1][1:].lower()
-            if file_ext not in supported_extensions:
-                print(f"Error: Unsupported file format '{file_ext}'")
-                print(f"Supported formats: {', '.join(sorted(supported_extensions))}")
-                exit(1)
-            mesh_paths.append(p)
-        indirpath = os.path.dirname(mesh_paths[0])
-
-    # Set up output directory
-    if args.output_dir is None:
-        outdirpath = os.path.join(indirpath, "collision")
-    else:
-        outdirpath = args.output_dir
-    
-    outdirpath = os.path.abspath(outdirpath)
-    
-    os.makedirs(outdirpath, exist_ok=True)
-
-    # Print summary
     if args.verbose or args.visualize:
-        print(f"Found {len(mesh_paths)} mesh files to process")
-        print(f"Input directory: {indirpath}")
-        print(f"Output directory: {outdirpath}")
-        print(f"Method: {args.method}")
-        
-        if args.method == "convex-hull":
-            print(f"Number of sample points: {args.num_points}")
-        elif args.method == "coacd":
-            print(f"CoACD threshold: {args.threshold}")
-            print(f"CoACD max convex hulls: {args.max_convex_hull}")
+        print(f"Found {total} mesh file(s) to process (method: {args.method})")
+        unique_outdirs = sorted({outdir for _, outdir in pairs})
+        for d in unique_outdirs:
+            print(f"  Output dir: {d}")
     else:
-        print(f"Processing {len(mesh_paths)} mesh files ({args.method})...")
-    
-    # Process with or without parallelization
+        print(f"Processing {total} mesh file(s) ({args.method})...")
+
+    # Build per-file kwargs
+    if args.method == "coacd":
+        extra = dict(method='coacd', threshold=args.threshold,
+                     max_convex_hull=args.max_convex_hull, visualize=False, verbose=args.verbose)
+    else:
+        extra = dict(method='convex-hull', num_points=args.num_points,
+                     visualize=False, verbose=args.verbose)
+
+    work_items = [(mesh_path, outdirpath, dict(extra)) for mesh_path, outdirpath in pairs]
+
     if args.visualize:
         if args.verbose:
-            print("Visualization enabled - processing sequentially")
+            print("Visualization enabled — processing sequentially")
         results = []
-        
-        # Use tqdm if available and not in verbose mode
-        iterator = tqdm(mesh_paths, desc="Processing", unit="mesh") if TQDM_AVAILABLE and not args.verbose else mesh_paths
-        
-        for mesh_path in iterator:
-            if args.method == "coacd":
-                result = process_mesh_coacd(
-                    mesh_path, outdirpath, 
-                    threshold=args.threshold,
-                    max_convex_hull=args.max_convex_hull,
-                    visualize=True,
-                    verbose=args.verbose
-                )
+        iterator = (tqdm(work_items, desc="Processing", unit="mesh")
+                    if TQDM_AVAILABLE and not args.verbose else work_items)
+        for mesh_path, outdirpath, kwargs in iterator:
+            os.makedirs(outdirpath, exist_ok=True)
+            kwargs['visualize'] = True
+            method = kwargs.pop('method')
+            if method == 'coacd':
+                results.append(process_mesh_coacd(mesh_path, outdirpath, **kwargs))
             else:
-                result = process_mesh_convex_hull(
-                    mesh_path, outdirpath, 
-                    num_points=args.num_points,
-                    visualize=True,
-                    verbose=args.verbose
-                )
-            results.append(result)
+                results.append(process_mesh_convex_hull(mesh_path, outdirpath, **kwargs))
     else:
-        # Determine number of processes
-        if args.jobs is not None:
-            num_processes = min(args.jobs, len(mesh_paths))
-        else:
-            num_processes = min(cpu_count(), len(mesh_paths))
-        
+        num_processes = min(args.jobs or cpu_count(), total)
         if args.verbose:
-            print(f"Using {num_processes} parallel processes")
+            print(f"Using {num_processes} parallel process(es)")
 
-        # Create partial function with fixed parameters
-        if args.method == "coacd":
-            process_func = partial(
-                process_mesh_coacd,
-                outdirpath=outdirpath,
-                threshold=args.threshold,
-                max_convex_hull=args.max_convex_hull,
-                visualize=False,
-                verbose=args.verbose
-            )
-        else:
-            process_func = partial(
-                process_mesh_convex_hull,
-                outdirpath=outdirpath,
-                num_points=args.num_points,
-                visualize=False,
-                verbose=args.verbose
-            )
-
-        # Process files in parallel with progress bar
         with Pool(processes=num_processes) as pool:
             if TQDM_AVAILABLE and not args.verbose:
-                # Use tqdm with imap for real-time progress updates
                 results = list(tqdm(
-                    pool.imap(process_func, mesh_paths),
-                    total=len(mesh_paths),
+                    pool.imap(_process_pair, work_items),
+                    total=total,
                     desc="Processing",
                     unit="mesh"
                 ))
             else:
-                results = pool.map(process_func, mesh_paths)
-    
+                results = pool.map(_process_pair, work_items)
+
     # Summary
     successful = sum(results)
-    total = len(mesh_paths)
-    
     if args.verbose:
         print(f"\nProcessing complete: {successful}/{total} files processed successfully")
         if successful < total:
-            print(f"Warning: {total - successful} files failed to process")
+            print(f"Warning: {total - successful} file(s) failed")
         else:
             print("All files processed successfully!")
     else:
-        # Concise summary
         if successful == total:
             print(f"✓ Successfully processed all {total} files")
         else:
