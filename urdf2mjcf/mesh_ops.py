@@ -1,8 +1,18 @@
+import hashlib
 import os
 import shutil
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
+
+
+def _compute_file_hash(path: str) -> str:
+    """Return the MD5 hex-digest of a file's contents (fast, good enough for dedup)."""
+    h = hashlib.md5()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
 from _utils import print_debug, print_info, print_warning, print_error, print_confirm
 
 try:
@@ -533,6 +543,15 @@ def copy_mesh_files(
     copied_count = 0
     converted_count = 0
     ignored_count = 0
+    deduplicated_count = 0
+
+    # Hash-based deduplication: tracks {md5_hash: canonical_dest_filename}.
+    # When a source file is identical (same MD5) to one already copied, we skip
+    # writing it again and return the canonical filename instead.  This collapses
+    # e.g. the 10 identically-named copies of synapticon_jd12_visual.stl into a
+    # single file on disk and ensures the MJCF references one shared mesh asset.
+    _hash_to_canonical: dict = {}
+    _hash_registry_lock = Lock()
 
     def _copy_with_conflict_check(mesh_type, srcs, dsts, link_name):
         """Copy or convert meshes.
@@ -542,7 +561,7 @@ def copy_mesh_files(
 
         Returns: List of dicts with material info for each mesh (empty for now).
         """
-        nonlocal copied_count, converted_count, ignored_count
+        nonlocal copied_count, converted_count, ignored_count, deduplicated_count
 
         is_valid = isinstance(srcs, list) and isinstance(dsts, list)
         is_valid |= isinstance(srcs, str) and isinstance(dsts, str)
@@ -578,6 +597,28 @@ def copy_mesh_files(
                 )
 
             if src_ext in SUPPORTED_FORMATS:
+                # --- Hash-based deduplication ---
+                # Compute MD5 of the source file and check if we already copied an
+                # identical file.  If so, skip the copy and return the canonical
+                # (first-seen) filename so the MJCF references a single shared asset.
+                src_hash = _compute_file_hash(src)
+                with _hash_registry_lock:
+                    if src_hash in _hash_to_canonical:
+                        canonical_name = _hash_to_canonical[src_hash]
+                        with counter_lock:
+                            deduplicated_count += 1
+                        print_debug(
+                            f"Deduplicating '{mesh_type}' mesh '{src_name}' "
+                            f"→ reusing '{canonical_name}' (identical content, MD5={src_hash[:8]}…)"
+                        )
+                        mesh_materials.append(
+                            {"file": canonical_name, "material": None, "rgba": None}
+                        )
+                        continue
+                    else:
+                        _hash_to_canonical[src_hash] = dest_name
+                # --- End deduplication ---
+
                 # Direct copy of STL/OBJ files (including already-extracted DAE meshes).
                 # Acquire the per-dest lock so concurrent threads for the same output
                 # file (multiple links sharing a mesh) don't interleave copy/simplify.
@@ -907,12 +948,14 @@ def copy_mesh_files(
         for link, mesh_path in absolute_mesh_paths.items():
             _process_link_mesh(link, mesh_path)
 
-    total_processed = copied_count + converted_count + ignored_count
+    total_processed = copied_count + converted_count + ignored_count + deduplicated_count
     summary_parts = []
     if copied_count > 0:
         summary_parts.append(f"{copied_count} copied")
     if converted_count > 0:
         summary_parts.append(f"{converted_count} converted (DAE→STL)")
+    if deduplicated_count > 0:
+        summary_parts.append(f"{deduplicated_count} deduplicated (identical content)")
     if ignored_count > 0:
         summary_parts.append(f"{ignored_count} ignored")
     if summary_parts:
