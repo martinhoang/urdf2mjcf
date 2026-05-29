@@ -599,8 +599,9 @@ def copy_mesh_files(
             if src_ext in SUPPORTED_FORMATS:
                 # --- Hash-based deduplication ---
                 # Compute MD5 of the source file and check if we already copied an
-                # identical file.  If so, skip the copy and return the canonical
-                # (first-seen) filename so the MJCF references a single shared asset.
+                # identical file.  The URDF was already preprocessed to reference
+                # dest_name, so we must still create dest_name in the output dir.
+                # We hardlink to the canonical file to avoid redundant disk usage.
                 src_hash = _compute_file_hash(src)
                 with _hash_registry_lock:
                     if src_hash in _hash_to_canonical:
@@ -609,10 +610,18 @@ def copy_mesh_files(
                             deduplicated_count += 1
                         print_debug(
                             f"Deduplicating '{mesh_type}' mesh '{src_name}' "
-                            f"→ reusing '{canonical_name}' (identical content, MD5={src_hash[:8]}…)"
+                            f"→ hardlinking to '{canonical_name}' (identical content, MD5={src_hash[:8]}…)"
                         )
+                        # Hardlink canonical → dest_name so MJCF refs resolve correctly.
+                        canonical_path = os.path.join(output_mesh_dir, canonical_name)
+                        dedup_dest = os.path.join(output_mesh_dir, dest_name)
+                        if dest_name != canonical_name and not os.path.exists(dedup_dest):
+                            try:
+                                os.link(canonical_path, dedup_dest)
+                            except OSError:
+                                shutil.copy2(canonical_path, dedup_dest)
                         mesh_materials.append(
-                            {"file": canonical_name, "material": None, "rgba": None}
+                            {"file": dest_name, "material": None, "rgba": None}
                         )
                         continue
                     else:

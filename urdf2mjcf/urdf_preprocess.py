@@ -293,6 +293,7 @@ def preprocess_urdf(
     separate_dae_meshes=True,
     append_mesh_type=False,
     zero_inertial_rpy=True,
+    collision_subdir=None,
 ):
     """Pre-process URDF for MuJoCo compatibility."""
     print_debug("Pre-processing URDF...")
@@ -553,6 +554,33 @@ def preprocess_urdf(
         for mesh_elem in collision_mesh_nodes:
             file_path = mesh_elem.get("filename", "")
             src_path = resolve_path(file_path)
+
+            # If collision_subdir is set, check for a pre-simplified mesh alongside
+            # the original (e.g. meshes/dg5fs_right/collision/link_base.STL).
+            # Use it transparently without touching the source xacro/URDF.
+            if collision_subdir and src_path and os.path.isfile(src_path):
+                # Resolve symlinks so that install-dir symlinks → src dir are
+                # followed before we look for the collision subdir sibling.
+                real_src = os.path.realpath(src_path)
+                src_dir = os.path.dirname(real_src)
+                src_base = os.path.basename(real_src)
+                candidate = os.path.join(src_dir, collision_subdir, src_base)
+                if os.path.isfile(candidate):
+                    print_debug(
+                        f"collision_subdir: using '{candidate}' instead of '{src_path}'"
+                    )
+                    src_path = candidate
+                else:
+                    # Try case-insensitive match (e.g. .stl vs .STL)
+                    stem, ext = os.path.splitext(src_base)
+                    for variant_ext in (ext, ext.upper(), ext.lower()):
+                        candidate = os.path.join(src_dir, collision_subdir, stem + variant_ext)
+                        if os.path.isfile(candidate):
+                            print_debug(
+                                f"collision_subdir: using '{candidate}' (case variant) instead of '{src_path}'"
+                            )
+                            src_path = candidate
+                            break
 
             # Extract scale attribute if present
             scale_str = mesh_elem.get("scale", "1 1 1")

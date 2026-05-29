@@ -377,6 +377,21 @@ def main():
         help="Do not transform inertial tensors to zero RPY orientation (enabled by default).",
     )
     advanced_group.add_argument(
+        "-csd",
+        "--collision-subdir",
+        type=str,
+        default=None,
+        metavar="SUBDIR",
+        dest="collision_subdir",
+        help=(
+            "Sub-directory name (e.g. 'collision') to look for pre-generated simplified "
+            "collision meshes. For each collision mesh at '<dir>/<file>.STL', if "
+            "'<dir>/<SUBDIR>/<file>.STL' exists it is used instead — without modifying "
+            "the source URDF/xacro. Useful when the URDF comes from an external/read-only "
+            "source but you have pre-simplified meshes alongside it."
+        ),
+    )
+    advanced_group.add_argument(
         "-cdm",
         "--combine-dae-meshes",
         action="store_false",
