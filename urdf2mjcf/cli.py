@@ -400,6 +400,16 @@ def main():
         help="Combine all meshes/materials from a DAE into a single STL instead of extracting them as separate files.",
     )
     advanced_group.add_argument(
+        "--dae-up-axis",
+        choices=["auto", "x", "y", "z"],
+        default="auto",
+        help=(
+            "Source up-axis for DAE meshes. 'auto' applies COLLADA scene-node "
+            "transforms and falls back to metadata; x/y/z force an additional "
+            "source-axis conversion to MuJoCo Z-up."
+        ),
+    )
+    advanced_group.add_argument(
         "-nmt",
         "--no-append-mesh-type",
         action="store_false",

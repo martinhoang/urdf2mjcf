@@ -67,6 +67,7 @@ urdf2mjcf robot.urdf.xacro -fb -af -arp -arc -djs 800.0 5.0 -ci
 - `-sr, --simplify-reduction RATIO` - Simplify meshes (0.0-1.0, values < 1.0 enable)
 - `-stf, --simplify-target-faces COUNT` - Target face count for simplification
 - `-sdm, --separate-dae-meshes` - Extract separate STL per mesh/material from DAE
+- `--dae-up-axis {auto,x,y,z}` - Apply DAE scene transforms automatically, or force an additional source-axis conversion to MuJoCo Z-up
 - `-nmt, --no-append-mesh-type` - Don't append `_visual`/`_collision` to filenames
 - `-nvmf, --no-validate-mesh-faces` - Disable auto mesh face validation
 - `-mfl, --max-faces-limit COUNT` - Max faces per mesh (default: 200000)

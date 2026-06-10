@@ -32,6 +32,7 @@
     "save_preprocessed": true,
     "zero_inertial_rpy": true,
     "separate_dae_meshes": false,
+    "dae_up_axis": "auto",
     "append_mesh_type": true,
     "xacro_args": [
         "hangup:=true",

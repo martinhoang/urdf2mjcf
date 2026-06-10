@@ -187,6 +187,7 @@ class URDFToMJCFConverter:
                 args.append_mesh_type,
                 args.zero_inertial_rpy,
                 getattr(args, "collision_subdir", None),
+                getattr(args, "dae_up_axis", "auto"),
             )
             progress.update(task, advance=1)
 

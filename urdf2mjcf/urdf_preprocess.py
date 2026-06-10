@@ -294,6 +294,7 @@ def preprocess_urdf(
     append_mesh_type=False,
     zero_inertial_rpy=True,
     collision_subdir=None,
+    dae_up_axis="auto",
 ):
     """Pre-process URDF for MuJoCo compatibility."""
     print_debug("Pre-processing URDF...")
@@ -404,11 +405,30 @@ def preprocess_urdf(
                         verbose=False,
                         separate_meshes=separate_dae_meshes,
                         name_prefix=link_name + "_" + file_name + "_",
+                        dae_up_axis=dae_up_axis,
                     )
 
                     if success_count > 0 and dae_mesh_info:
+                        first_mesh_data = next(iter(dae_mesh_info.values()))
+                        source_up_axis = first_mesh_data.get("source_up_axis")
+                        rotation_applied = first_mesh_data.get(
+                            "axis_rotation_applied", False
+                        )
+                        scene_transforms_applied = first_mesh_data.get(
+                            "scene_transforms_applied", False
+                        )
+                        axis_summary = ""
+                        if scene_transforms_applied:
+                            axis_summary = "; applied COLLADA scene transforms"
+                        elif source_up_axis:
+                            axis_summary = (
+                                f"; rotated {source_up_axis} -> Z_UP"
+                                if rotation_applied
+                                else f"; already {source_up_axis}"
+                            )
                         print_confirm(
-                            f"-> Extracted {success_count} meshes from '{base_name}'"
+                            f"-> Extracted {success_count} meshes from "
+                            f"'{base_name}'{axis_summary}"
                         )
 
                         # Get the parent of visual element (should be the link)
@@ -771,6 +791,10 @@ def preprocess_urdf(
         "inertiafromgeom": "false",
     }
     final_compiler_attrs.update(compiler_node.attrib)
+    # Mesh filenames above are rewritten to basenames and copied into
+    # default_mesh_dir. An input URDF's meshdir is relative to the source URDF
+    # and is therefore stale once the preprocessed URDF is written elsewhere.
+    final_compiler_attrs["meshdir"] = default_mesh_dir
 
     if compiler_options:
         for option in compiler_options:
