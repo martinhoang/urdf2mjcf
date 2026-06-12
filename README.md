@@ -1,6 +1,6 @@
 # URDF2MJCF Converter
 
-A powerful CLI tool for converting URDF/Xacro files to MuJoCo MJCF format with advanced mesh processing, physics customization, and ROS2 integration.
+A Python library and CLI tool for converting URDF/Xacro files to MuJoCo MJCF format with advanced mesh processing, physics customization, and ROS2 integration.
 
 ## Features
 
@@ -38,6 +38,48 @@ urdf2mjcf config.json
 # Advanced: Full ROS2 setup with custom gains
 urdf2mjcf robot.urdf.xacro -fb -af -arp -arc -djs 800.0 5.0 -ci
 ```
+
+## Python API
+
+Import `convert` to run the same conversion pipeline from Python. Inline
+keyword names match the long CLI option destinations:
+
+```python
+from urdf2mjcf import convert
+
+output_path = convert(
+    "robot.urdf.xacro",
+    output="mujoco_output",
+    floating_base=True,
+    add_floor=True,
+    height_above_floor=0.3,
+    default_actuator_gains={"kp": 800.0, "kv": 5.0},
+)
+print(output_path)
+```
+
+Configuration files and inline overrides can be combined. Inline values take
+precedence over the JSON file:
+
+```python
+output_path = convert(
+    config_file="config.json",
+    floating_base=True,
+    log_level="DEBUG",
+)
+```
+
+You can also pass inline values as a mapping:
+
+```python
+output_path = convert(
+    "robot.urdf",
+    options={"add_floor": True, "no_copy_meshes": True},
+)
+```
+
+`convert_urdf` is provided as an alias. `build_conversion_args(...)` resolves
+and validates arguments without running the conversion.
 
 ## Key Arguments
 

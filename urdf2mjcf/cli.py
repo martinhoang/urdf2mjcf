@@ -6,7 +6,6 @@ import subprocess
 import shutil
 
 from . import __version__
-from .converter import URDFToMJCFConverter
 from _utils import (
     set_log_level,
     print_confirm,
@@ -20,13 +19,17 @@ class ConfigLoader:
     def __init__(self, parser):
         self.parser = parser
 
-    def load_config(self, config_file, current_args):
+    def load_config(
+        self, config_file, current_args, provided_args=None, strict=False
+    ):
         """
         Apply JSON config to args, with CLI args taking precedence.
         The function loads the JSON file and manually updates the namespace,
         preserving CLI arguments that were explicitly provided.
         """
         if not config_file or not os.path.exists(config_file):
+            if strict:
+                raise FileNotFoundError(f"Config file '{config_file}' not found.")
             print_warning(
                 f"Config file '{config_file}' not found. Using default arguments and CLI overrides only."
             )
@@ -53,20 +56,7 @@ class ConfigLoader:
 
         # Get the current arguments that were explicitly set via CLI
         # We'll preserve these and only update the ones not set
-        cli_provided_args = set()
-
-        # Check which arguments were provided on command line.
-        # For each flag we add both the raw cleaned string AND the argparse
-        # dest so that short flags (e.g. -d → dest="debug") are recognised.
-        for arg in sys.argv[1:]:
-            if arg.startswith("-"):
-                clean_arg = arg.lstrip("-").replace("-", "_")
-                cli_provided_args.add(clean_arg)
-                # Resolve dest via parser actions (handles -d → debug, etc.)
-                for action in self.parser._actions:
-                    if arg in action.option_strings:
-                        cli_provided_args.add(action.dest)
-                        break
+        provided_args = set(provided_args or ())
 
         # Update namespace with config values, but don't override CLI args
         for key, value in config_data.items():
@@ -78,7 +68,7 @@ class ConfigLoader:
                 continue
 
             # Only set if not provided via CLI (except for the special case of input)
-            if dest_key not in cli_provided_args or dest_key == "input":
+            if dest_key not in provided_args:
                 # Special handling for default_actuator_gains
                 if dest_key == "default_actuator_gains":
                     value = parse_actuator_gains(value)
@@ -89,7 +79,7 @@ class ConfigLoader:
         return current_args
 
 
-def main():
+def build_argument_parser():
     parser = argparse.ArgumentParser(
         description="Convert a URDF file to a MuJoCo MJCF (XML) file using the <compiler> tag method.",
         formatter_class=argparse.RawTextHelpFormatter,
@@ -446,8 +436,33 @@ def main():
         action="store_true",
         help="Show full traceback on error.",
     )
+    return parser
+
+
+def _provided_argument_names(parser, argv):
+    provided_args = set()
+    for arg in argv:
+        if not arg.startswith("-"):
+            continue
+        option = arg.split("=", 1)[0]
+        for action in parser._actions:
+            if option in action.option_strings:
+                provided_args.add(action.dest)
+                break
+    return provided_args
+
+
+def main(argv=None):
+    parser = build_argument_parser()
+    argv = list(argv) if argv is not None else None
+
     # Initial parse to get log level and config file path
-    args, _ = parser.parse_known_args()
+    args, _ = parser.parse_known_args(argv)
+    provided_args = _provided_argument_names(
+        parser, argv if argv is not None else sys.argv[1:]
+    )
+    if args.input and not args.input.endswith(".json"):
+        provided_args.add("input")
 
     # Auto-detect JSON config file from input argument
     config_file = args.config_file
@@ -461,7 +476,9 @@ def main():
 
     if config_file:
         config_loader = ConfigLoader(parser)
-        loaded_args = config_loader.load_config(config_file, args)
+        loaded_args = config_loader.load_config(
+            config_file, args, provided_args=provided_args
+        )
         if loaded_args:
             args = loaded_args
             # If we auto-detected config, get input from the loaded config
@@ -488,6 +505,8 @@ def main():
 
     # Update log level again in case it was in the config
     set_log_level(args.log_level, args.traceback)
+
+    from .converter import URDFToMJCFConverter
 
     converter = URDFToMJCFConverter(args)
     

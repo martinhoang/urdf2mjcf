@@ -72,6 +72,8 @@ class URDFToMJCFConverter:
         # Set console for print functions to use rich console
         set_rich_console(console)
         live.start()
+        temp_urdf_path = None
+        preprocessed_urdf_path = None
         try:
             # Step 1: Resolve input and output paths
             print_debug("\n" + "=" * 100)
@@ -455,9 +457,9 @@ class URDFToMJCFConverter:
         finally:
             # Clean up intermediates unless explicitly asked to keep preprocessed
             if not args.save_preprocessed:
-                if os.path.exists(preprocessed_urdf_path):
+                if preprocessed_urdf_path and os.path.exists(preprocessed_urdf_path):
                     os.remove(preprocessed_urdf_path)
-                if os.path.exists(temp_urdf_path):
+                if temp_urdf_path and os.path.exists(temp_urdf_path):
                     os.remove(temp_urdf_path)
 
         if root is None:
@@ -546,6 +548,7 @@ class URDFToMJCFConverter:
 
         # Save final output
         progress.update(task, description="[cyan]Saving MJCF...")
+        result_path = None
         try:
             tree = ET.ElementTree(root)
             ET.indent(tree, space="\t")
@@ -563,6 +566,7 @@ class URDFToMJCFConverter:
                 "REMEMBER TO BUILD THE PACKAGE SO THE ASSET FILES ARE COPIED OR LINKED!"
             )
             abs_path = os.path.abspath(output_path)
+            result_path = abs_path
             # Clean path printing: use absolute path directly (no redundant cwd prefix)
             print_confirm(
                 f"\nRun this to simulate with installed mujoco:\n\nsimulate {abs_path}\n\n"
@@ -579,6 +583,8 @@ class URDFToMJCFConverter:
         except Exception as e:
             print_warning(f"Could not save arguments to config file. Error: {e}")
             pass
+
+        return result_path
 
     def save_config(self, output_dir):
         """Save arguments to a JSON file, excluding specified keys."""
