@@ -87,11 +87,14 @@ and validates arguments without running the conversion.
 - `-o, --output PATH` - Output directory (default: `<input_name>/`)
 - `-fb, --floating-base` - Add free joint for floating base
 - `-af, --add-floor` - Add ground plane
-- `-haf, --height-above-floor HEIGHT` - Set robot height above floor (default: 0.3)
+- `-haf, --height-above-floor HEIGHT` - Set fixed or floating root-body height above floor
 
 ### Physics & Dynamics
 - `-djs, --default-actuator-gains Kp Kv` - Set joint stiffness and damping
 - `-dm, --damping-multiplier FACTOR` - Multiply all joint damping values
+- `--default-joint-stiffness VALUE` - Set default MuJoCo joint stiffness
+- `--default-joint-damping VALUE` - Set default MuJoCo joint damping
+- `--default-joint-friction VALUE` - Set default MuJoCo joint friction loss
 - `-gc, --gravity-compensation` - Enable gravity compensation
 - `-a, --armature VALUE` - Set global armature for joints
 - `-s, --solver SOLVER` - Simulation solver (PGS, CG, Newton)
@@ -102,7 +105,8 @@ and validates arguments without running the conversion.
 - `-arc, --add-ros2-control` - Add main Ros2Control plugin
 - `-rcc, --ros2-control-config PATH` - Path to ros2_control YAML config
 - `-ncp, --no-clock-publisher` - Disable clock publisher
-- `-nmj, --no-mimic-joints` - Disable mimic joint plugins
+- `-nmj, --no-mimic-joints` - Disable native MuJoCo mimic joint equalities
+- `--legacy-mimic-joint-plugins` - Use legacy MimicJoint actuator plugins
 
 ### Mesh Processing
 - `-ci, --calculate-inertia` - **NEW!** Calculate inertia from meshes using URDF link masses
@@ -138,6 +142,9 @@ Create `config.json`:
   "calculate_inertia": true,
   "default_actuator_gains": [800.0, 5.0],
   "damping_multiplier": 1.5,
+  "default_joint_stiffness": 0.1,
+  "default_joint_damping": 1.0,
+  "default_joint_friction": 0.01,
   "gravity_compensation": true,
   "separate_dae_meshes": true,
   "xacro_args": ["hardware_type:=sim_mujoco", "use_sensors:=true"],
@@ -148,6 +155,12 @@ Create `config.json`:
 Then run: `urdf2mjcf config.json` (auto-detected) or `urdf2mjcf robot.urdf -cf config.json`
 
 **Precedence**: CLI arguments > JSON config > defaults
+
+URDF `<mimic>` joints are converted to native MuJoCo `<equality><joint>`
+constraints by default. The follower joint becomes `joint1`, the source joint
+becomes `joint2`, and the URDF offset/multiplier become the first two
+`polycoef` values. Use `--legacy-mimic-joint-plugins` only for models that
+still require the old `MujocoRosUtils::MimicJoint` actuator plugin.
 
 ## New Features
 

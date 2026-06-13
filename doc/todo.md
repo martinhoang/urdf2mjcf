@@ -1,157 +1,121 @@
-# Development Roadmap - urdf2mjcf
+# urdf2mjcf Development Roadmap
 
-This document tracks the development progress and future plans for the urdf2mjcf project.
+Last updated: 2026-06-12
 
----
+This roadmap tracks concrete improvements for the Python API, CLI, conversion
+pipeline, mesh processing, and release workflow. The detailed visual plan is
+available in [plan.html](plan.html).
 
-## Current Release & Next Steps
+## Current Baseline
 
-### v0.9.0 - Planned (Next Release) 🎯
+- Package version: `0.9.0`
+- Python requirement: 3.10+
+- Interfaces: CLI, JSON configuration, and Python `convert(...)` API
+- Tests: API argument resolution, URDF preprocessing, DAE extraction, utilities
+- Main risk: conversion failures are often logged and returned as `None`
+  instead of raising a structured error
 
-- [ ] Re-arrange post-processing procedures for max functionalities and avoid potential bugs
-- [x] Show nice progress bar during mesh processing steps
-- [x] Passing additional arguments alongside JSON config file
-- [x] Add logging system with different verbosity levels
+## P0 - Correctness and API Contract
 
----
+- [ ] Add `ConversionError` with stage, input path, and original exception
+- [ ] Make the Python API raise on every failed conversion
+- [ ] Give the CLI consistent non-zero exit codes without duplicate tracebacks
+- [ ] Return a `ConversionResult` containing MJCF path, output directory,
+      generated assets, warnings, and saved config path
+- [ ] Validate inline and JSON values with the same rules
+- [ ] Reject unknown config keys instead of silently adding attributes
+- [ ] Validate ranges and combinations before processing:
+  - simplification ratios must be between 0 and 1
+  - face limits and target counts must be positive
+  - solver and integrator values must be supported
+  - ROS plugin options must have their required companion settings
+- [ ] Resolve config-relative paths relative to the config file directory
+- [ ] Add regression tests for missing input, xacro failure, MuJoCo compile
+      failure, output write failure, and invalid configuration
 
-## Future Vision (After v0.9.0)
+### P0 acceptance criteria
 
-### Potential Features for Later Releases
+- No converter failure path returns an ambiguous `None`
+- CLI and Python API use the same validated options
+- Temporary files and Rich console state are cleaned up on all failures
+- Tests assert error type, stage, and exit code
 
-- Unit tests for the whole package
-- GUI interface for conversion configuration
-- Real-time conversion progress display
-- Automatic URDF validation before conversion
+## P1 - Maintainability and Test Coverage
 
----
+- [ ] Move option definitions and defaults out of `cli.py` into a typed config
+      model shared by CLI, JSON, and Python callers
+- [ ] Split the monolithic converter into explicit stages:
+  - resolve inputs and output layout
+  - expand xacro
+  - preprocess URDF
+  - process meshes
+  - compile with MuJoCo
+  - post-process MJCF
+  - save artifacts and metadata
+- [ ] Keep `URDFToMJCFConverter` as the stable orchestration facade
+- [ ] Add progress callbacks so API users are not tied to Rich terminal output
+- [ ] Add `quiet` and progress-disable modes for libraries and CI
+- [ ] Replace broad exception handling where failures can be classified
+- [ ] Add small fixture robots for primitive, mesh, mimic, ROS2 control, and
+      custom `<mujoco>` cases
+- [ ] Add golden MJCF tests with normalization for deterministic comparisons
+- [ ] Add CLI/API parity tests using the same configuration matrix
+- [ ] Add linting, formatting, type checking, and Python 3.10-3.13 CI
 
-## Completed Releases
+## P2 - Mesh Pipeline Reliability and Performance
 
-### v0.8.1 - Bug Fixes (2025-10-XX) ✨ Latest
+- [ ] Cache converted meshes using source hash plus processing options
+- [ ] Avoid modifying source meshes during validation or simplification
+- [ ] Write all generated assets into a staging directory and publish
+      atomically after successful conversion
+- [ ] Add deterministic collision and visual mesh naming with a manifest
+- [ ] Report mesh operations and before/after face counts in conversion results
+- [ ] Add bounded worker controls and memory-aware defaults
+- [ ] Test duplicate basenames, mixed-case extensions, nested directories,
+      non-uniform scale, DAE transforms, and material bindings
+- [ ] Add OBJ/DAE/STL capability checks with actionable dependency errors
+- [ ] Benchmark representative small, medium, and large robot models
 
-- [x] Fixed bug with not-injecting-no-match nodes from URDF to MJCF
-- [x] Fixed bug with `inject_attrs` multiple predications not working
+## P3 - User Experience and New Capabilities
 
-### v0.8.0 - Inertial Transform & Mesh Validation (2025-10-XX)
+- [ ] Add `urdf2mjcf validate` for configuration, dependency, URDF, mesh, and
+      output checks without writing conversion artifacts
+- [ ] Add `urdf2mjcf inspect` to summarize links, joints, meshes, actuators,
+      mimic joints, and ROS2 control interfaces
+- [ ] Add `dry_run=True` to the Python API
+- [ ] Generate a machine-readable conversion report (`report.json`)
+- [ ] Add configuration schema export and editor completion
+- [ ] Add package URI resolver hooks for non-ROS environments
+- [ ] Add optional conversion profiles such as `fixed-base`, `floating-base`,
+      `ros2-control`, and `lightweight-meshes`
+- [ ] Consider a GUI only after the config schema and validation API stabilize
 
-- [x] Processing multiple meshes (with their colors) inside a DAE file
-- [x] Auto detect and validate mesh face count before conversion
-- [x] Automatic inertial tensor transformation to zero RPY orientation
-- [x] Automatic mesh validation and face limit handling (200,000 faces)
-- [x] DAE multi-mesh extraction with material preservation
+## Documentation and Release Work
 
-### v0.7.0 - Advanced Collision Mesh Generation (2025-10-18)
+- [ ] Correct stale README option names and examples against `--help`
+- [ ] Document every Python API option and return/error contract
+- [ ] Add migration notes for configuration changes
+- [ ] Keep `config_template.json` generated from canonical defaults
+- [ ] Add changelog/release automation and version consistency checks
+- [ ] Define semantic-versioning policy for CLI, config, and Python API changes
+- [ ] Add installation guidance for minimal and full mesh-processing extras
 
-- [x] Use CoACD for convex decomposition to achieve high-resolution collision hulls
-- [x] Multi-format support (STL, OBJ, DAE) with case-insensitive matching
-- [x] Progress bar with tqdm
-- [x] Verbose and visualization modes
-- [x] Single file and directory processing
-- [x] Parallel processing support
+## Recently Completed
 
-### v0.6.0 - CLI Utilities Integration (2025-10-16)
+- [x] Added public Python `convert(...)` and `convert_urdf(...)` API
+- [x] Added inline options, mapping options, and JSON config overrides
+- [x] Added `build_conversion_args(...)`
+- [x] Returned the generated MJCF path on successful conversion
+- [x] Added Python API tests and README examples
+- [x] Fixed DAE scene transforms and mesh path handling
+- [x] Added recursive STL conversion and duplicate mesh handling
 
-- [x] Activate tool usage in cli arguments
-- [x] Install tools as extension of the "urdf2mjcf" tool with command prefixes
-- [x] Integrated mesh tools as CLI utilities
+## Deferred
 
-### v0.5.0 - ROS2 Integration (2025-10-05)
+- Full desktop GUI
+- Live 3D preview embedded in the converter
+- Automatic physical parameter tuning
+- Cloud conversion service
 
-- [x] Actuator re-naming for ros2 plugins
-- [x] Fixed special operations attribute handling
-- [x] Improved post-processing procedures
-
-### v0.4.0 - Mesh Processing Tools (2025-10-02)
-
-- [x] Added mesh simplification tool
-- [x] Added collision mesh generation tool (basic convex hull)
-- [x] Added inertia calculation tool
-- [x] Automatically use tool to reduce mesh complexity (1-200,000 faces)
-- [x] Added todo.md documentation
-
-### v0.3.0 - Bug Fixes and Error Handling (2025-10-02)
-
-- [x] Fixed inject_attrs bugs under parent tag
-- [x] Raise error on failed mesh conversion
-- [x] Apply special operations with respect to parent tag scope
-
-### v0.2.0 - Enhanced Configuration (2025-10-01)
-
-- [x] Improved string parsing in inject_attrs and replace_attrs
-- [x] Better attribute manipulation in post-processing
-
-### v0.1.0 - Initial Release (2025-09-30)
-
-- [x] Basic URDF to MJCF conversion
-- [x] JSON configuration support
-- [x] Mesh operations (simplification, inertia calculation)
-- [x] XML pre/post-processing
-- [x] CLI interface
-- [x] Special operations (inject_attrs, replace_attrs)
-
----
-
-## Recent Achievements (Since v0.8.1)
-
-- [x] **Automatic Inertia Calculation**: Calculate and inject inertia tensors from mesh geometry using URDF link masses
-- [x] **Dynamic Actuator Gains**: Support for per-actuator gain configurations via dict
-- [x] **Dampratio Support**: Added support for `dampratio` attribute in velocity actuators (alternative to `kv`)
-- [x] **Solver Options**: Added solver configuration to compiler options
-- [x] **Scale Extraction from URDF**: Parse mesh scale from URDF `<mesh scale="">` attributes instead of hardcoding
-- [x] **Unified Link Properties**: Clean data structure combining mass and mesh scales
-- [x] **Updated Documentation**: Concise README and RELEASE notes with all new features
-
----
-
-## Known Issues & Limitations
-
-### Current Limitations
-
-- No GUI interface yet
-
-### Performance Considerations
-
-- Large meshes (>1M faces) may be slow to process
-- Parallel processing limited by CPU cores
-- Memory usage scales with mesh complexity
-
-### Compatibility Notes
-
-- Requires Python 3.8+
-- CoACD requires additional dependencies
-- Some features require pymeshlab
-
----
-
-## Contributing
-
-Interested in contributing? Check the items in v0.9.0 or pick any feature you're interested in!
-
-### How to Contribute
-
-1. Check this todo list for items to work on
-2. Create an issue to discuss your proposed changes
-3. Fork the repository and create a feature branch
-4. Submit a pull request with your changes
-5. Ensure tests pass and documentation is updated
-
-### Development Guidelines
-
-- Follow PEP 8 style guide
-- Add tests for new features
-- Update documentation as needed
-- Keep commits atomic and well-described
-
----
-
-## Version History
-
-For detailed release notes, see [RELEASE.md](../RELEASE.md)
-
-**Latest Release:** v0.7.0 (2025-10-18)  
-**Next Planned:** v0.8.0 (Configuration & UX improvements)
-
----
-
-Last Updated: 2025-10-18
+These are intentionally deferred until conversion behavior, error contracts,
+configuration schemas, and deterministic output are stable.

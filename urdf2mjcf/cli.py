@@ -135,7 +135,10 @@ def build_argument_parser():
         "--height-above-floor",
         type=float,
         default=0.0,
-        help="Set the height of the robot w.r.t the added floor",
+        help=(
+            "Set the root body height above the floor for fixed- or "
+            "floating-base robots. (default: 0.0)"
+        ),
     )
     core_group.add_argument(
         "-na",
@@ -184,6 +187,24 @@ def build_argument_parser():
         help="Multiply all joint damping values by this factor. (default: 1.0)",
     )
     physics_group.add_argument(
+        "--default-joint-stiffness",
+        type=float,
+        metavar="VALUE",
+        help="Set stiffness on the MuJoCo default joint definition.",
+    )
+    physics_group.add_argument(
+        "--default-joint-damping",
+        type=float,
+        metavar="VALUE",
+        help="Set damping on the MuJoCo default joint definition.",
+    )
+    physics_group.add_argument(
+        "--default-joint-friction",
+        type=float,
+        metavar="VALUE",
+        help="Set frictionloss on the MuJoCo default joint definition.",
+    )
+    physics_group.add_argument(
         "-gc",
         "--gravity-compensation",
         action="store_true",
@@ -216,7 +237,15 @@ def build_argument_parser():
         "--no-mimic-joints",
         dest="add_mimic_joints",
         action="store_false",
-        help="Do not add MujocoRosUtils::MimicJoint plugins. Added by default.",
+        help="Do not convert URDF mimic joints to MuJoCo equality constraints.",
+    )
+    ros_group.add_argument(
+        "--legacy-mimic-joint-plugins",
+        action="store_true",
+        help=(
+            "Use legacy MujocoRosUtils::MimicJoint actuator plugins instead of "
+            "MuJoCo equality constraints."
+        ),
     )
     ros_group.add_argument(
         "-rcc",

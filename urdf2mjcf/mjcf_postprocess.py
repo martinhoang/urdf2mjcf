@@ -15,9 +15,45 @@ def post_process_damping_multiplier(root, damping_multiplier):
 	"""Multiply all joint damping by a factor to stabilize simulation for some robots."""
 	for joint in root.findall(".//joint"):
 		if "damping" in joint.attrib:
-				original_damping = float(joint.get("damping"))
-				joint.set("damping", str(original_damping * damping_multiplier))
+			original_damping = float(joint.get("damping"))
+			joint.set("damping", str(original_damping * damping_multiplier))
 		print_debug(f"-> Multiplied joint damping by a factor of {damping_multiplier}.")
+
+def post_process_set_default_joint_properties(
+	root, stiffness=None, damping=None, friction=None
+):
+	"""Set properties inherited by every joint through MuJoCo defaults."""
+	properties = {
+		"stiffness": stiffness,
+		"damping": damping,
+		"frictionloss": friction,
+	}
+	properties = {
+		name: str(value) for name, value in properties.items() if value is not None
+	}
+	if not properties:
+		return
+
+	default_node = next(
+		(
+			node
+			for node in root.findall("default")
+			if node.get("class") is None
+		),
+		None,
+	)
+	if default_node is None:
+		default_node = xml_utils.ensure_child_after(root, "default", "option")
+
+	joint_node = default_node.find("joint")
+	if joint_node is None:
+		joint_node = ET.SubElement(default_node, "joint")
+
+	for name, value in properties.items():
+		joint_node.set(name, value)
+
+	attrs = ", ".join(f"{name}='{value}'" for name, value in properties.items())
+	print_debug(f"-> Set default joint properties: {attrs}")
 
 def post_process_compiler_options(root):
 	"""Apply compiler options captured from URDF into final MJCF."""
@@ -602,6 +638,33 @@ def post_process_group_ros_utils_plugins(root):
 		extension_node.append(p)
 
 
+def post_process_set_base_height(root, height_above_ground):
+	"""Set the root body's Z position while preserving its X/Y position."""
+	worldbody = root.find("worldbody")
+	if worldbody is None:
+		print_warning("No <worldbody> found. Cannot set the base height.")
+		return
+
+	base_body = worldbody.find("body")
+	if base_body is None:
+		print_warning("No root <body> found. Cannot set the base height.")
+		return
+
+	pos = base_body.get("pos", "0 0 0").split()
+	if len(pos) != 3:
+		print_warning(
+			f"Root body '{base_body.get('name')}' has invalid pos="
+			f"'{base_body.get('pos')}'. Cannot set the base height."
+		)
+		return
+
+	pos[2] = str(height_above_ground)
+	base_body.set("pos", " ".join(pos))
+	print_debug(
+		f"-> Set base link '{base_body.get('name')}' height to "
+		f"{height_above_ground}."
+	)
+
 def post_process_make_base_floating(root, height_above_ground=0.0):
 	"""Add free joint to root body."""
 	worldbody = root.find("worldbody")
@@ -619,8 +682,7 @@ def post_process_make_base_floating(root, height_above_ground=0.0):
 					f"-> Made the base link '{base_body.get('name')}' floating with a free joint."
 				)
 
-			if base_body.get("pos") is None:
-				base_body.set("pos", f"0 0 {height_above_ground}")
+			post_process_set_base_height(root, height_above_ground)
 
 def post_process_add_gravity_compensation(root):
 	"""Set gravcomp=1 for bodies."""
@@ -658,7 +720,7 @@ def post_process_set_simulation_options(root, solver=None, integrator=None):
 		print_debug(f"-> Set simulation options: {', '.join(options_set)}")
 
 
-def post_process_add_actuators(root, default_ros2_control_instance, mimic_joints=None, add_ros_plugins=False, default_actuator_gains= {"kp" : 500.0, "kv" : 1.0}, ros2c_joint_map=None, force_actuator_tags=True):
+def post_process_add_actuators(root, default_ros2_control_instance, mimic_joints=None, add_ros_plugins=False, default_actuator_gains= {"kp" : 500.0, "kv" : 1.0}, ros2c_joint_map=None, force_actuator_tags=True, skip_mimic_actuators=False):
 	"""Add actuators per ros2_control interfaces.
 	- Multiple interfaces on one joint are supported.
 	- If a joint has both 'position' and 'velocity', create both actuators.
@@ -690,9 +752,13 @@ def post_process_add_actuators(root, default_ros2_control_instance, mimic_joints
 	if actuator_node is None:
 		actuator_node = ET.Element("actuator")
 		root_children = list(root)
+		insert_after = worldbody
+		for tag in ("contact", "equality", "tendon"):
+			node = root.find(tag)
+			if node is not None:
+				insert_after = node
 		try:
-			worldbody_index = root_children.index(worldbody)
-			root.insert(worldbody_index + 1, actuator_node)
+			root.insert(root_children.index(insert_after) + 1, actuator_node)
 		except ValueError:
 			root.append(actuator_node)
 
@@ -719,6 +785,11 @@ def post_process_add_actuators(root, default_ros2_control_instance, mimic_joints
 			continue
 
 		is_mimic = mimic_joints and joint_name in mimic_joints
+		if is_mimic and skip_mimic_actuators:
+			print_debug(
+				f"-> Skipping actuator generation for equality-constrained mimic joint: {joint_name}"
+			)
+			continue
 
 		# Determine which actuator types to create from ros2_control interfaces
 		ifaces = set(ros2c_joint_map.get(joint_name, set()))
@@ -791,8 +862,90 @@ def post_process_add_actuators(root, default_ros2_control_instance, mimic_joints
 	if plugin_joint_names:
 		print_debug(f"-> Added ROS plugin actuators for joints: {', '.join(plugin_joint_names)}")
 
+def post_process_add_mimic_equalities(root, mimic_joints):
+	"""Convert URDF mimic joints to native MuJoCo joint equalities."""
+	if not mimic_joints:
+		return
+
+	worldbody = root.find("worldbody")
+	if worldbody is None:
+		print_warning("No <worldbody> found. Cannot add mimic joint equalities.")
+		return
+
+	joints_by_name = {
+		joint.get("name"): joint
+		for joint in worldbody.findall(".//joint")
+		if joint.get("name")
+	}
+
+	equality_node = root.find("equality")
+	added_joint_names = []
+	for joint_name, mimic_info in mimic_joints.items():
+		source_joint_name = mimic_info["joint"]
+		follower_joint = joints_by_name.get(joint_name)
+		source_joint = joints_by_name.get(source_joint_name)
+		if follower_joint is None or source_joint is None:
+			missing = joint_name if follower_joint is None else source_joint_name
+			print_warning(
+				f"Cannot add mimic equality for '{joint_name}': joint '{missing}' "
+				"was not found in the MJCF."
+			)
+			continue
+
+		unsupported = [
+			name
+			for name, joint in (
+				(joint_name, follower_joint),
+				(source_joint_name, source_joint),
+			)
+			if joint.get("type", "hinge") not in {"hinge", "slide"}
+		]
+		if unsupported:
+			print_warning(
+				f"Cannot add mimic equality for '{joint_name}': only hinge and "
+				f"slide joints are supported (invalid: {', '.join(unsupported)})."
+			)
+			continue
+
+		if equality_node is None:
+			equality_node = ET.Element("equality")
+			actuator_node = root.find("actuator")
+			if actuator_node is not None:
+				root.insert(list(root).index(actuator_node), equality_node)
+			else:
+				root.insert(list(root).index(worldbody) + 1, equality_node)
+
+		existing = next(
+			(
+				elem
+				for elem in equality_node.findall("joint")
+				if elem.get("joint1") == joint_name
+				and elem.get("joint2") == source_joint_name
+			),
+			None,
+		)
+		equality_joint = (
+			existing
+			if existing is not None
+			else ET.SubElement(equality_node, "joint")
+		)
+		equality_joint.set("joint1", joint_name)
+		equality_joint.set("joint2", source_joint_name)
+		equality_joint.set(
+			"polycoef",
+			f"{mimic_info.get('offset', '0.0')} "
+			f"{mimic_info.get('multiplier', '1.0')} 0 0 0",
+		)
+		added_joint_names.append(joint_name)
+
+	if added_joint_names:
+		print_debug(
+			f"-> Added native MuJoCo mimic equalities for joints: "
+			f"{', '.join(added_joint_names)}"
+		)
+
 def post_process_add_mimic_plugins(root, mimic_joints, default_actuator_gains):
-	"""Add MimicJoint plugins and ensure a position actuator exists for each mimic joint."""
+	"""Add legacy MimicJoint plugins and a position actuator for each follower."""
 	if not mimic_joints:
 		return
 
@@ -814,9 +967,13 @@ def post_process_add_mimic_plugins(root, mimic_joints, default_actuator_gains):
 		worldbody = root.find("worldbody")
 		if worldbody is not None:
 			root_children = list(root)
+			insert_after = worldbody
+			for tag in ("contact", "equality", "tendon"):
+				node = root.find(tag)
+				if node is not None:
+					insert_after = node
 			try:
-				widx = root_children.index(worldbody)
-				root.insert(widx + 1, actuator_node)
+				root.insert(root_children.index(insert_after) + 1, actuator_node)
 			except ValueError:
 				root.append(actuator_node)
 		else:
@@ -1047,5 +1204,3 @@ def post_process_geom_groups(root):
 			geom.set("group", "3")
 			n_collision += 1
 	print_info(f"-> Assigned {n_visual} visual geoms to group 2, {n_collision} collision geoms to group 3.")
-
-

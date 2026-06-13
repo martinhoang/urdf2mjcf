@@ -483,6 +483,12 @@ class URDFToMJCFConverter:
             mjcf_postprocess.post_process_damping_multiplier(
                 root, args.damping_multiplier
             )
+        mjcf_postprocess.post_process_set_default_joint_properties(
+            root,
+            stiffness=args.default_joint_stiffness,
+            damping=args.default_joint_damping,
+            friction=args.default_joint_friction,
+        )
 
         # Inject custom plugins and mujoco elements from URDF
         for plugin_node in urdf_plugins:
@@ -505,22 +511,40 @@ class URDFToMJCFConverter:
         mjcf_postprocess.post_process_group_ros_utils_plugins(root)
 
         if args.floating_base:
-            floating_base_args = [root]
-            if args.height_above_floor > 0:
-                floating_base_args.append(args.height_above_floor)
-            mjcf_postprocess.post_process_make_base_floating(*floating_base_args)
+            mjcf_postprocess.post_process_make_base_floating(
+                root, args.height_above_floor
+            )
+        elif args.add_floor:
+            mjcf_postprocess.post_process_set_base_height(
+                root, args.height_above_floor
+            )
         if args.add_floor:
             mjcf_postprocess.post_process_add_floor(root)
+        use_mimic_equalities = (
+            args.add_mimic_joints
+            and not args.legacy_mimic_joint_plugins
+            and bool(mimic_joints)
+        )
+        if use_mimic_equalities:
+            mjcf_postprocess.post_process_add_mimic_equalities(
+                root, mimic_joints
+            )
         if not args.no_actuators:
             mjcf_postprocess.post_process_add_actuators(
                 root,
-                mimic_joints,
-                args.add_ros_plugins,
+                default_ros2_control_instance=self.default_ros2_control_instance,
+                mimic_joints=mimic_joints if args.add_mimic_joints else None,
+                add_ros_plugins=args.add_ros_plugins,
                 default_actuator_gains=args.default_actuator_gains,
                 ros2c_joint_map=ros2c_joint_map,
                 force_actuator_tags=args.force_actuator_tags,
+                skip_mimic_actuators=use_mimic_equalities,
             )
-            if args.add_mimic_joints and mimic_joints:
+            if (
+                args.add_mimic_joints
+                and args.legacy_mimic_joint_plugins
+                and mimic_joints
+            ):
                 mjcf_postprocess.post_process_add_mimic_plugins(
                     root, mimic_joints, args.default_actuator_gains
                 )

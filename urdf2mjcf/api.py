@@ -20,7 +20,8 @@ def build_conversion_args(
 
     Precedence is: keyword overrides, ``options`` mapping, JSON config, defaults.
     Inline option names use the argparse destination names, such as
-    ``floating_base`` or ``default_actuator_gains``.
+    ``floating_base``, ``default_actuator_gains``, or
+    ``default_joint_damping``.
     """
     parser = build_argument_parser()
     args = parser.parse_args([])
@@ -106,6 +107,8 @@ def convert(
         config_file: Optional JSON configuration path.
         options: Optional mapping of inline conversion options.
         **overrides: Inline conversion options. These have highest precedence.
+            Joint defaults can be set with ``default_joint_stiffness``,
+            ``default_joint_damping``, and ``default_joint_friction``.
     """
     args = build_conversion_args(
         input_path,

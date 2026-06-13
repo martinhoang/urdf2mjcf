@@ -11,12 +11,20 @@ def test_build_conversion_args_uses_defaults_and_inline_options():
         "robot.urdf",
         floating_base=True,
         default_actuator_gains="kp=800,kv=5",
+        default_joint_stiffness=0.1,
+        default_joint_damping=1.0,
+        default_joint_friction=0.01,
     )
 
     assert args.input == "robot.urdf"
     assert args.floating_base is True
     assert args.add_floor is False
     assert args.default_actuator_gains == {"kp": 800.0, "kv": 5.0}
+    assert args.default_joint_stiffness == 0.1
+    assert args.default_joint_damping == 1.0
+    assert args.default_joint_friction == 0.01
+    assert args.add_mimic_joints is True
+    assert args.legacy_mimic_joint_plugins is False
 
 
 def test_build_conversion_args_normalizes_path_options(tmp_path):
